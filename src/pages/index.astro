@@ -1,0 +1,64 @@
+---
+import '../styles/global.css';
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="description" content="Build balanced worship schedules and publish them silently to Planning Center." />
+		<link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}favicon.svg`} />
+		<title>Garden City Worship Scheduler</title>
+	</head>
+	<body>
+		<header class="site-header">
+			<a class="brand" href={import.meta.env.BASE_URL}>Garden City <span>Worship Scheduler</span></a>
+			<nav><a href={`${import.meta.env.BASE_URL}people/`}>People</a></nav>
+			<p id="connection-state" class="status">Not connected</p>
+		</header>
+		<main>
+			<section class="hero">
+				<p class="eyebrow">Private scheduling workspace</p>
+				<h1>Build balanced bands without sending an email.</h1>
+				<p class="lede">Skill levels, rules, and drafts stay private here. People, plans, availability, and final assignments remain in Planning Center.</p>
+			</section>
+			<section class="panel" aria-labelledby="setup-title">
+				<div><p class="step">First step</p><h2 id="setup-title">Connect your workspace</h2><p>Once Supabase is configured, sign in with your approved email to sync settings across devices.</p></div>
+				<form id="login-form" class="login-form">
+					<label for="email">Email address</label>
+					<div class="form-row"><input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required /><button type="submit">Send sign-in link</button></div>
+					<p id="form-message" class="form-message" role="status"></p>
+				</form>
+			</section>
+			<section class="features" aria-label="Application roadmap">
+				<article><span>01</span><h2>People</h2><p>Assign private A, B, or C skill levels by instrument.</p></article>
+				<article><span>02</span><h2>Rules</h2><p>Set the balance and rotation that fits your ministry.</p></article>
+				<article><span>03</span><h2>Draft</h2><p>Review every week and resolve conflicts before publishing.</p></article>
+				<article><span>04</span><h2>Publish</h2><p>Add assignments with notifications forcibly disabled.</p></article>
+			</section>
+		</main>
+		<script>
+			import { getSupabase, supabaseConfigured } from '../lib/supabase';
+			const form = document.querySelector<HTMLFormElement>('#login-form')!;
+			const message = document.querySelector<HTMLParagraphElement>('#form-message')!;
+			const state = document.querySelector<HTMLParagraphElement>('#connection-state')!;
+			if (!supabaseConfigured) {
+				message.textContent = 'Add the public Supabase settings to .env to enable sign-in.';
+				form.querySelector('button')!.disabled = true;
+			} else {
+				const supabase = getSupabase();
+				const { data } = await supabase.auth.getSession();
+				if (data.session) state.textContent = `Connected as ${data.session.user.email}`;
+				form.addEventListener('submit', async (event) => {
+					event.preventDefault();
+					const email = new FormData(form).get('email')?.toString().trim();
+					if (!email) return;
+					message.textContent = 'Sending…';
+					const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href.split('#')[0] } });
+					message.textContent = error ? error.message : 'Check your email for the sign-in link.';
+				});
+			}
+		</script>
+	</body>
+</html>
