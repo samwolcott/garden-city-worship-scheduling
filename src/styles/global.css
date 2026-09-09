@@ -48,6 +48,17 @@ th { color: #667871; font-size: .72rem; text-transform: uppercase; letter-spacin
 tbody tr:last-child td { border-bottom: 0; }
 td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border-radius: 7px; background: white; }
 .save-state { color: #667871; font-size: .82rem; }
+.pairing-panel { margin-top: 2rem; padding: 1.5rem; background: #fffdf7; border: 1px solid #ded8ca; border-radius: 14px; }
+.pairing-panel h2 { margin: .2rem 0 .35rem; }
+.pairing-panel > div > p:last-child { max-width: 700px; color: #667871; }
+.pair-form { display: grid; grid-template-columns: 1fr auto 1fr auto; align-items: end; gap: .75rem; margin-top: 1.3rem; }
+.pair-form label { display: grid; gap: .4rem; color: #567069; font-size: .78rem; font-weight: 750; }
+.pair-form > span { padding-bottom: .75rem; color: #667871; font-size: .85rem; }
+.pair-form select { width: 100%; padding: .7rem .8rem; border: 1px solid #bac5c0; border-radius: 8px; background: white; }
+.pair-list { margin: 1rem 0 0; padding: 0; list-style: none; border-top: 1px solid #e7e1d5; }
+.pair-list li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem 0; border-bottom: 1px solid #e7e1d5; }
+.pair-list .empty-pair { color: #667871; }
+.text-button { padding: .35rem .55rem; color: #9a442b; background: transparent; }
 @media (max-width: 760px) {
 	.site-header, main { padding-left: 1.1rem; padding-right: 1.1rem; }
 	main { padding-top: 2rem; }
@@ -56,4 +67,6 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 	.form-row { flex-direction: column; }
 	.toolbar { grid-template-columns: 1fr; }
 	.page-heading { align-items: start; }
+	.pair-form { grid-template-columns: 1fr; }
+	.pair-form > span { padding: 0; }
 }

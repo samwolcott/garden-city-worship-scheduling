@@ -34,6 +34,18 @@ import '../styles/global.css';
 					<tbody id="people-list"></tbody>
 				</table>
 			</div>
+
+			<section id="pairing-panel" class="pairing-panel" hidden aria-labelledby="pairing-title">
+				<div><p class="step">Hard scheduling rules</p><h2 id="pairing-title">Required pairs</h2><p>If either musician is scheduled, the other must appear on the same plan. If one is unavailable, neither will be scheduled.</p></div>
+				<form id="pair-form" class="pair-form">
+					<label>First musician<select id="pair-one" required></select></label>
+					<span>with</span>
+					<label>Second musician<select id="pair-two" required></select></label>
+					<button type="submit">Require together</button>
+				</form>
+				<p id="pair-message" class="form-message" role="status"></p>
+				<ul id="pair-list" class="pair-list"></ul>
+			</section>
 		</main>
 
 		<script>
@@ -41,6 +53,7 @@ import '../styles/global.css';
 			type PcoPerson = { id: string; attributes: { name?: string; first_name?: string; last_name?: string } };
 			type PcoTeam = { id: string; attributes: { name?: string } };
 			type Setting = { planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null };
+			type PairRule = { id: string; person_one_id: string; person_two_id: string };
 
 			const message = document.querySelector<HTMLParagraphElement>('#people-message')!;
 			const table = document.querySelector<HTMLDivElement>('.table-wrap')!;
@@ -49,8 +62,15 @@ import '../styles/global.css';
 			const search = document.querySelector<HTMLInputElement>('#people-search')!;
 			const showInactive = document.querySelector<HTMLInputElement>('#show-inactive')!;
 			const activeCount = document.querySelector<HTMLElement>('#active-count')!;
+			const pairingPanel = document.querySelector<HTMLElement>('#pairing-panel')!;
+			const pairForm = document.querySelector<HTMLFormElement>('#pair-form')!;
+			const pairOne = document.querySelector<HTMLSelectElement>('#pair-one')!;
+			const pairTwo = document.querySelector<HTMLSelectElement>('#pair-two')!;
+			const pairList = document.querySelector<HTMLUListElement>('#pair-list')!;
+			const pairMessage = document.querySelector<HTMLParagraphElement>('#pair-message')!;
 			let people: PcoPerson[] = [];
 			let settings = new Map<string, Setting>();
+			let pairRules: PairRule[] = [];
 
 			if (!supabaseConfigured) {
 				message.textContent = 'Supabase is not configured yet.';
@@ -104,6 +124,40 @@ import '../styles/global.css';
 							row.append(nameCell, statusCell, tierCell, stateCell); tbody.append(row);
 						}
 					};
+					const personName = (id: string) => {
+						const person = people.find((item) => item.id === id);
+						return person?.attributes.name ?? (person ? `${person.attributes.first_name ?? ''} ${person.attributes.last_name ?? ''}`.trim() : `Planning Center person ${id}`);
+					};
+					const renderPairs = () => {
+						pairList.replaceChildren();
+						for (const pair of pairRules) {
+							const item = document.createElement('li');
+							const names = document.createElement('span'); names.textContent = `${personName(pair.person_one_id)} + ${personName(pair.person_two_id)}`;
+							const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'text-button'; remove.textContent = 'Remove';
+							remove.addEventListener('click', async () => {
+								remove.disabled = true;
+								const { error } = await supabase.from('required_pair_rules').delete().eq('id', pair.id);
+								if (error) { pairMessage.textContent = error.message; remove.disabled = false; return; }
+								pairRules = pairRules.filter((item) => item.id !== pair.id); renderPairs();
+							});
+							item.append(names, remove); pairList.append(item);
+						}
+						if (!pairRules.length) { const empty = document.createElement('li'); empty.className = 'empty-pair'; empty.textContent = 'No required pairs yet.'; pairList.append(empty); }
+					};
+					const configurePairSelectors = () => {
+						const options = people.map((person) => new Option(personName(person.id), person.id));
+						pairOne.replaceChildren(new Option('Choose a musician', ''), ...options.map((option) => option.cloneNode(true) as HTMLOptionElement));
+						pairTwo.replaceChildren(new Option('Choose a musician', ''), ...options.map((option) => option.cloneNode(true) as HTMLOptionElement));
+					};
+					pairForm.addEventListener('submit', async (event) => {
+						event.preventDefault();
+						if (!pairOne.value || !pairTwo.value || pairOne.value === pairTwo.value) { pairMessage.textContent = 'Choose two different musicians.'; return; }
+						const [person_one_id, person_two_id] = [pairOne.value, pairTwo.value].sort();
+						pairMessage.textContent = 'Saving…';
+						const { data, error } = await supabase.from('required_pair_rules').upsert({ owner_id: session.user.id, person_one_id, person_two_id }, { onConflict: 'owner_id,person_one_id,person_two_id' }).select('id,person_one_id,person_two_id').single();
+						if (error) { pairMessage.textContent = error.message; return; }
+						pairRules = [...pairRules.filter((item) => item.id !== data.id), data as PairRule]; pairMessage.textContent = 'Pairing rule saved.'; pairForm.reset(); renderPairs();
+					});
 
 					try {
 						const teams = await fetchAll<PcoTeam>('/services/v2/teams?per_page=100');
@@ -113,13 +167,16 @@ import '../styles/global.css';
 						teamSelect.addEventListener('change', async () => {
 							if (!teamSelect.value) return;
 							message.textContent = 'Loading musicians…'; table.hidden = true;
-							const [loadedPeople, saved] = await Promise.all([
+							const [loadedPeople, saved, savedPairs] = await Promise.all([
 								fetchAll<PcoPerson>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/people?per_page=100`),
 								supabase.from('member_settings').select('planning_center_person_id,active,skill_level'),
+								supabase.from('required_pair_rules').select('id,person_one_id,person_two_id').order('created_at'),
 							]);
 							if (saved.error) throw saved.error;
+							if (savedPairs.error) throw savedPairs.error;
 							people = loadedPeople; settings = new Map((saved.data ?? []).map((item) => [item.planning_center_person_id, item as Setting]));
-							message.textContent = `${people.length} musicians loaded. New musicians start inactive.`; table.hidden = false; render();
+							pairRules = (savedPairs.data ?? []) as PairRule[];
+							message.textContent = `${people.length} musicians loaded. New musicians start inactive.`; table.hidden = false; pairingPanel.hidden = false; configurePairSelectors(); renderPairs(); render();
 						});
 						search.addEventListener('input', render); showInactive.addEventListener('change', render);
 					} catch (error) { message.textContent = error instanceof Error ? error.message : 'Could not load Planning Center.'; }
