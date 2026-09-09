@@ -21,9 +21,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 				<div><p class="eyebrow">Schedule builder</p><h1>Suggestions</h1><p class="lede">Build a balanced rotation, review it, then add unconfirmed placeholders to existing Planning Center plans.</p></div>
 			</section>
 			<section class="toolbar schedule-toolbar" aria-label="Schedule range">
-				<label>From<input id="starts-on" type="date" /></label>
-				<label>Through<input id="ends-on" type="date" /></label>
-				<button id="generate" type="button">Suggest bands</button>
+				<label>From Sunday<select id="starts-on" disabled><option>Loading Sunday plans…</option></select></label>
+				<label>Through Sunday<select id="ends-on" disabled><option>Loading Sunday plans…</option></select></label>
+				<button id="generate" type="button" disabled>Suggest bands</button>
 			</section>
 			<p id="schedule-message" class="notice" role="status">Choose a range containing configured weekly bands.</p>
 			<section id="schedule-results" class="schedule-results" hidden></section>
@@ -43,16 +43,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			type DraftRow = { id: string; planning_center_plan_id: string; planning_center_person_id: string; planning_center_team_id: string; position_name: string; person_name: string; planning_center_plan_person_id: string | null; published_at: string | null };
 			type RenderedWeek = WeekSuggestion & { teamId: string; teamName: string; planId?: string; planUrl?: string };
 
-			const startsOn = document.querySelector<HTMLInputElement>('#starts-on')!;
-			const endsOn = document.querySelector<HTMLInputElement>('#ends-on')!;
+			const startsOn = document.querySelector<HTMLSelectElement>('#starts-on')!;
+			const endsOn = document.querySelector<HTMLSelectElement>('#ends-on')!;
 			const generateButton = document.querySelector<HTMLButtonElement>('#generate')!;
 			const publishButton = document.querySelector<HTMLButtonElement>('#publish')!;
 			const message = document.querySelector<HTMLParagraphElement>('#schedule-message')!;
 			const results = document.querySelector<HTMLElement>('#schedule-results')!;
 			const publishBar = document.querySelector<HTMLElement>('#publish-bar')!;
-			const today = new Date();
-			const eightWeeks = new Date(today); eightWeeks.setDate(eightWeeks.getDate() + 56);
-			startsOn.value = today.toLocaleDateString('en-CA'); endsOn.value = eightWeeks.toLocaleDateString('en-CA');
 
 			if (!supabaseConfigured) message.textContent = 'Supabase is not configured yet.';
 			else {
@@ -84,6 +81,20 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						}
 						return records;
 					};
+					const loadPlanDateOptions = async () => {
+						try {
+							message.textContent = 'Loading upcoming Sunday plans from Planning Center…';
+							const teams = await fetchAll<Resource>('/services/v2/teams?per_page=100');
+							const serviceTypeIds = [...new Set(teams.map((team) => team.relationships?.service_type?.data?.id).filter((id): id is string => Boolean(id)))];
+							const planGroups = await Promise.all(serviceTypeIds.map((id) => fetchAll<Resource>(`/services/v2/service_types/${encodeURIComponent(id)}/plans?filter=future&order=sort_date&per_page=100`)));
+							const dates = [...new Set(planGroups.flat().map((plan) => String(plan.attributes.sort_date ?? '').slice(0, 10)).filter((date) => date && new Date(`${date}T12:00:00`).getDay() === 0))].sort();
+							const options = dates.map((date) => new Option(new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }), date));
+							startsOn.replaceChildren(...options.map((option) => option.cloneNode(true) as HTMLOptionElement)); endsOn.replaceChildren(...options.map((option) => option.cloneNode(true) as HTMLOptionElement));
+							startsOn.disabled = !dates.length; endsOn.disabled = !dates.length; generateButton.disabled = !dates.length;
+							if (dates.length) { startsOn.value = dates[0]; endsOn.value = dates[Math.min(7, dates.length - 1)]; message.textContent = 'Choose the first and last Sunday to schedule.'; }
+							else { startsOn.replaceChildren(new Option('No upcoming Sunday plans', '')); endsOn.replaceChildren(new Option('No upcoming Sunday plans', '')); message.textContent = 'No upcoming Sunday plans were found in Planning Center.'; }
+						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not load Planning Center plan dates.'; }
+					};
 					const nameOf = (person: Resource) => person.attributes.name ?? `${person.attributes.first_name ?? ''} ${person.attributes.last_name ?? ''}`.trim();
 					const blockedDates = (blocks: Resource[], dates: string[]) => dates.filter((date) => blocks.some((block) => {
 						const start = String(block.attributes.starts_at ?? '').slice(0, 10); const end = String(block.attributes.ends_at ?? start).slice(0, 10);
@@ -104,6 +115,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						}
 						results.hidden = false; publishBar.hidden = !draftRows.length;
 					};
+					await loadPlanDateOptions();
 
 					generateButton.addEventListener('click', async () => {
 						if (!startsOn.value || !endsOn.value || endsOn.value < startsOn.value) { message.textContent = 'Choose a valid date range.'; return; }
