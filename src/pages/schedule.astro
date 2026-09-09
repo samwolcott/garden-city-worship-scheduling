@@ -61,6 +61,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					let draftRows: DraftRow[] = [];
 					let renderedWeeks: RenderedWeek[] = [];
 					let teamServiceTypes = new Map<string, string>();
+					const savedTeamSettings = await supabase.from('team_settings').select('planning_center_team_id,visible');
+					if (savedTeamSettings.error) { message.classList.add('error-notice'); message.textContent = savedTeamSettings.error.message; throw savedTeamSettings.error; }
+					const hiddenTeamIds = new Set((savedTeamSettings.data ?? []).filter((item) => !item.visible).map((item) => item.planning_center_team_id));
 					const callPco = async (path: string, method = 'GET', body?: Record<string, unknown>) => {
 						const { data, error } = await supabase.functions.invoke('planning-center', { body: { method, path, body } });
 						if (!error) return data;
@@ -86,7 +89,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							message.textContent = 'Loading upcoming Sunday plans from Planning Center…';
 							const serviceTypes = (await fetchAll<Resource>('/services/v2/service_types?per_page=100')).filter((serviceType) => !serviceType.attributes.archived_at && !serviceType.attributes.deleted_at);
 							const teamGroups = await Promise.all(serviceTypes.map(async (serviceType) => (await fetchAll<Resource>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)).map((team) => ({ ...team, relationships: { ...team.relationships, service_type: { data: { id: serviceType.id } } } }))));
-							const teams = [...new Map(teamGroups.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at).map((team) => [team.id, team])).values()];
+							const teams = [...new Map(teamGroups.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at && !hiddenTeamIds.has(team.id)).map((team) => [team.id, team])).values()];
 							const serviceTypeIds = [...new Set(teams.map((team) => team.relationships?.service_type?.data?.id).filter((id): id is string => Boolean(id)))];
 							const planGroups = await Promise.all(serviceTypeIds.map((id) => fetchAll<Resource>(`/services/v2/service_types/${encodeURIComponent(id)}/plans?filter=future&order=sort_date&per_page=100`)));
 							const dates = [...new Set(planGroups.flat().map((plan) => String(plan.attributes.sort_date ?? '').slice(0, 10)).filter((date) => date && new Date(`${date}T12:00:00`).getDay() === 0))].sort();
@@ -132,7 +135,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							if (requirementsResult.error) throw requirementsResult.error; if (settingsResult.error) throw settingsResult.error; if (pairsResult.error) throw pairsResult.error;
 							const activeServiceTypes = serviceTypes.filter((serviceType) => !serviceType.attributes.archived_at && !serviceType.attributes.deleted_at);
 							const teamGroups = await Promise.all(activeServiceTypes.map(async (serviceType) => (await fetchAll<Resource>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)).map((team) => ({ ...team, relationships: { ...team.relationships, service_type: { data: { id: serviceType.id } } } }))));
-							const activeTeams = [...new Map(teamGroups.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at).map((team) => [team.id, team])).values()];
+							const activeTeams = [...new Map(teamGroups.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at && !hiddenTeamIds.has(team.id)).map((team) => [team.id, team])).values()];
 							const activeTeamIds = new Set(activeTeams.map((team) => team.id));
 							const requirements = ((requirementsResult.data ?? []) as Requirement[]).filter((item) => activeTeamIds.has(item.planning_center_team_id));
 							if (!requirements.length) throw new Error('No weekly instrument requirements are configured in this range. Add them on Weekly bands first.');

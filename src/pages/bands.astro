@@ -150,7 +150,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					try {
 						const serviceTypes = (await fetchAll<PcoServiceType>('/services/v2/service_types?per_page=100')).filter((serviceType) => !serviceType.attributes.archived_at && !serviceType.attributes.deleted_at);
 						const teamGroups = await Promise.all(serviceTypes.map(async (serviceType) => (await fetchAll<PcoTeam>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)).map((team) => ({ ...team, relationships: { ...team.relationships, service_type: { data: { id: serviceType.id } } } }))));
-						const teams = [...new Map(teamGroups.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at).map((team) => [team.id, team])).values()];
+						const savedTeamSettings = await supabase.from('team_settings').select('planning_center_team_id,visible'); if (savedTeamSettings.error) throw savedTeamSettings.error;
+						const hiddenTeamIds = new Set((savedTeamSettings.data ?? []).filter((item) => !item.visible).map((item) => item.planning_center_team_id));
+						const teams = [...new Map(teamGroups.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at && !hiddenTeamIds.has(team.id)).map((team) => [team.id, team])).values()];
 						teamsById = new Map(teams.map((team) => [team.id, team]));
 						teamSelect.replaceChildren(new Option('Choose a team', ''));
 						for (const team of teams) teamSelect.add(new Option(team.attributes.name ?? `Team ${team.id}`, team.id));
