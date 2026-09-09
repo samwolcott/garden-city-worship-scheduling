@@ -176,7 +176,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								});
 								actions.append(tier, swap); item.append(identity, actions); list.append(item);
 							}
-							for (const slot of week.unfilled) { const item = document.createElement('li'); item.className = 'unfilled'; item.innerHTML = `<span><strong>${slot.positionName}</strong>No eligible, available musician</span><span>Unfilled</span>`; list.append(item); }
+							for (const slot of week.unfilled) { const item = document.createElement('li'); item.className = 'unfilled'; const identity = document.createElement('span'); const position = document.createElement('strong'); position.textContent = slot.positionName; const explanation = document.createElement('span'); explanation.className = 'person-with-reason'; explanation.append(document.createTextNode('No eligible, available musician')); const tooltip = document.createElement('span'); tooltip.className = 'reason-tooltip unfilled-tooltip'; tooltip.tabIndex = 0; tooltip.setAttribute('aria-label', `Why ${slot.positionName} is unfilled`); tooltip.textContent = 'i'; const tooltipBody = document.createElement('span'); tooltipBody.setAttribute('role', 'tooltip'); const reasons = document.createElement('ul'); for (const reason of slot.reasons) { const reasonItem = document.createElement('li'); reasonItem.textContent = reason; reasons.append(reasonItem); } tooltipBody.append(reasons); tooltip.append(tooltipBody); explanation.append(tooltip); identity.append(position, explanation); const status = document.createElement('span'); status.textContent = 'Unfilled'; item.append(identity, status); list.append(item); }
 							card.append(list); results.append(card);
 						}
 						results.hidden = false; publishBar.hidden = !draftRows.length;

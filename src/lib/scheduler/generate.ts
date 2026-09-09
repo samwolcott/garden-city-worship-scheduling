@@ -13,7 +13,8 @@ export interface Candidate {
 
 export interface Slot { positionId: string; positionName: string; }
 export interface SuggestedAssignment extends Slot { personId: string; personName: string; tier: SkillLevel; reasons: string[]; }
-export interface WeekSuggestion { date: string; assignments: SuggestedAssignment[]; unfilled: Slot[]; }
+export interface UnfilledSlot extends Slot { reasons: string[]; }
+export interface WeekSuggestion { date: string; assignments: SuggestedAssignment[]; unfilled: UnfilledSlot[]; }
 export interface ExistingAssignment { personId: string; tier: SkillLevel | null; positionId?: string; }
 
 export const preferenceGap = (preference = '') => {
@@ -42,6 +43,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 	for (const date of [...dates].sort()) {
 		const open = [...(slotsByDate.get(date) ?? [])];
 		const assignments: SuggestedAssignment[] = [];
+		let unfilled: UnfilledSlot[] = [];
 		const existing = existingByDate.get(date) ?? [];
 		const scheduled = new Set(existing.map((assignment) => assignment.personId));
 		const tierCounts = new Map<SkillLevel, number>([['A', 0], ['B', 0], ['C', 0]]);
@@ -83,7 +85,26 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 				}, 0);
 				if (!best || score < best.score) best = { people: group as Candidate[], placements, score };
 			}
-			if (!best) break;
+			if (!best) {
+				unfilled = open.map((slot) => {
+					const qualified = [...eligible.values()].filter((candidate) => candidate.positionIds.includes(slot.positionId));
+					if (!qualified.length) return { ...slot, reasons: ['No active musician with a Band tier is assigned to this Planning Center position.'] };
+					const categories = new Map<string, string[]>(); const add = (reason: string, name: string) => categories.set(reason, [...(categories.get(reason) ?? []), name]);
+					for (const candidate of qualified) {
+						const assignedDates = history.get(candidate.id) ?? []; const preference = positionPreference(candidate, slot.positionId); const gap = preferenceGap(preference);
+						if (scheduled.has(candidate.id)) add('Already scheduled on this Sunday', candidate.name);
+						else if (candidate.blockedDates.includes(date)) add('Planning Center blockout', candidate.name);
+						else if (preference.toLowerCase() === 'unavailable') add(`Planning Center ${slot.positionName} preference is Unavailable`, candidate.name);
+						else if (gap > 0 && assignedDates.some((assignedDate) => Math.abs(Date.parse(date) - Date.parse(assignedDate)) / 86400000 < gap)) add(`Planning Center cadence (${preference})`, candidate.name);
+						else if (!candidate.scheduleEverySunday && assignedDates.some((assignedDate) => Math.abs(Date.parse(date) - Date.parse(assignedDate)) / 86400000 < 14)) add('Would create back-to-back Sundays', candidate.name);
+						else if (!candidate.scheduleEverySunday && new Set(assignedDates.filter((assignedDate) => assignedDate.slice(0, 7) === date.slice(0, 7))).size >= monthlyCap) add(`Reached the ${monthlyCap}-Sunday monthly maximum`, candidate.name);
+						else if ([...requiredGroupFor(candidate.id, pairRules)].some((partnerId) => partnerId !== candidate.id && !scheduled.has(partnerId))) add('Required scheduling partner could not also be placed', candidate.name);
+						else add('Could not fit alongside the remaining position and pairing requirements', candidate.name);
+					}
+					return { ...slot, reasons: [...categories].map(([reason, names]) => `${reason}: ${names.join(', ')}`) };
+				});
+				break;
+			}
 			for (const { person, slotIndex } of best.placements) {
 				const slot = open[slotIndex];
 				const positionKey = `${person.id}:${slot.positionId}`;
@@ -112,7 +133,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 			}
 			best.placements.map((placement) => placement.slotIndex).sort((a, b) => b - a).forEach((index) => open.splice(index, 1));
 		}
-		results.push({ date, assignments, unfilled: open });
+		results.push({ date, assignments, unfilled });
 	}
 	return results;
 }
