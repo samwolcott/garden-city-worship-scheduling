@@ -84,7 +84,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					const loadPlanDateOptions = async () => {
 						try {
 							message.textContent = 'Loading upcoming Sunday plans from Planning Center…';
-							const teams = (await fetchAll<Resource>('/services/v2/teams?per_page=100')).filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at);
+							const [loadedTeams, serviceTypes] = await Promise.all([fetchAll<Resource>('/services/v2/teams?per_page=100'), fetchAll<Resource>('/services/v2/service_types?per_page=100')]);
+							const activeServiceTypeIds = new Set(serviceTypes.filter((serviceType) => !serviceType.attributes.archived_at && !serviceType.attributes.deleted_at).map((serviceType) => serviceType.id));
+							const teams = loadedTeams.filter((team) => { const serviceTypeId = team.relationships?.service_type?.data?.id; return !team.attributes.archived_at && !team.attributes.deleted_at && (!serviceTypeId || activeServiceTypeIds.has(serviceTypeId)); });
 							const serviceTypeIds = [...new Set(teams.map((team) => team.relationships?.service_type?.data?.id).filter((id): id is string => Boolean(id)))];
 							const planGroups = await Promise.all(serviceTypeIds.map((id) => fetchAll<Resource>(`/services/v2/service_types/${encodeURIComponent(id)}/plans?filter=future&order=sort_date&per_page=100`)));
 							const dates = [...new Set(planGroups.flat().map((plan) => String(plan.attributes.sort_date ?? '').slice(0, 10)).filter((date) => date && new Date(`${date}T12:00:00`).getDay() === 0))].sort();
@@ -121,14 +123,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						if (!startsOn.value || !endsOn.value || endsOn.value < startsOn.value) { message.textContent = 'Choose a valid date range.'; return; }
 						generateButton.disabled = true; publishBar.hidden = true; results.hidden = true; message.classList.remove('error-notice'); message.textContent = 'Reading requirements, availability, and Planning Center plans…';
 						try {
-							const [requirementsResult, settingsResult, pairsResult, teams] = await Promise.all([
+							const [requirementsResult, settingsResult, pairsResult, teams, serviceTypes] = await Promise.all([
 								supabase.from('weekly_instrument_requirements').select('service_date,planning_center_team_id,planning_center_team_position_id,position_name,required_count').gte('service_date', startsOn.value).lte('service_date', endsOn.value).order('service_date'),
 								supabase.from('member_settings').select('planning_center_person_id,active,skill_level'),
 								supabase.from('required_pair_rules').select('person_one_id,person_two_id'),
 								fetchAll<Resource>('/services/v2/teams?per_page=100'),
+								fetchAll<Resource>('/services/v2/service_types?per_page=100'),
 							]);
 							if (requirementsResult.error) throw requirementsResult.error; if (settingsResult.error) throw settingsResult.error; if (pairsResult.error) throw pairsResult.error;
-							const activeTeams = teams.filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at);
+							const activeServiceTypeIds = new Set(serviceTypes.filter((serviceType) => !serviceType.attributes.archived_at && !serviceType.attributes.deleted_at).map((serviceType) => serviceType.id));
+							const activeTeams = teams.filter((team) => { const serviceTypeId = team.relationships?.service_type?.data?.id; return !team.attributes.archived_at && !team.attributes.deleted_at && (!serviceTypeId || activeServiceTypeIds.has(serviceTypeId)); });
 							const activeTeamIds = new Set(activeTeams.map((team) => team.id));
 							const requirements = ((requirementsResult.data ?? []) as Requirement[]).filter((item) => activeTeamIds.has(item.planning_center_team_id));
 							if (!requirements.length) throw new Error('No weekly instrument requirements are configured in this range. Add them on Weekly bands first.');
