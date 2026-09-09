@@ -36,7 +36,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			<p id="people-message" class="notice" role="status">Connecting to Planning Center…</p>
 			<div class="table-wrap" hidden>
 				<table>
-					<thead><tr><th>Musician</th><th>Instrument</th><th>Status</th><th>Band tier</th><th>Save state</th></tr></thead>
+					<thead><tr><th id="musician-heading" aria-sort="ascending"><button class="sort-button" id="sort-musician" type="button">Musician <span aria-hidden="true">↑</span></button></th><th id="instrument-heading" aria-sort="none"><button class="sort-button" id="sort-instrument" type="button">Instrument <span aria-hidden="true">↕</span></button></th><th>Status</th><th>Band tier</th><th>Save state</th></tr></thead>
 					<tbody id="people-list"></tbody>
 				</table>
 			</div>
@@ -80,12 +80,18 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			const pairMessage = document.querySelector<HTMLParagraphElement>('#pair-message')!;
 			const teamVisibilityPanel = document.querySelector<HTMLDetailsElement>('#team-visibility')!;
 			const teamVisibilityList = document.querySelector<HTMLDivElement>('#team-visibility-list')!;
+			const sortMusician = document.querySelector<HTMLButtonElement>('#sort-musician')!;
+			const sortInstrument = document.querySelector<HTMLButtonElement>('#sort-instrument')!;
+			const musicianHeading = document.querySelector<HTMLTableCellElement>('#musician-heading')!;
+			const instrumentHeading = document.querySelector<HTMLTableCellElement>('#instrument-heading')!;
 			let people: PcoPerson[] = [];
 			let settings = new Map<string, Setting>();
 			let pairRules: PairRule[] = [];
 			let instrumentsByPerson = new Map<string, string[]>();
 			let availableTeams: PcoTeam[] = [];
 			let teamSettings = new Map<string, TeamSetting>();
+			let sortColumn: 'musician' | 'instrument' = 'musician';
+			let sortDirection: 'ascending' | 'descending' = 'ascending';
 
 			if (!supabaseConfigured) {
 				message.textContent = 'Supabase is not configured yet.';
@@ -143,7 +149,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						const query = search.value.toLowerCase();
 						tbody.replaceChildren();
 						activeCount.textContent = String([...settings.values()].filter((item) => item.active).length);
-						for (const person of people) {
+						const sortedPeople = [...people].sort((a, b) => {
+							const nameA = a.attributes.name ?? `${a.attributes.first_name ?? ''} ${a.attributes.last_name ?? ''}`.trim(); const nameB = b.attributes.name ?? `${b.attributes.first_name ?? ''} ${b.attributes.last_name ?? ''}`.trim();
+							const valueA = sortColumn === 'musician' ? nameA : instrumentsByPerson.get(a.id)?.join(', ') ?? 'Not assigned'; const valueB = sortColumn === 'musician' ? nameB : instrumentsByPerson.get(b.id)?.join(', ') ?? 'Not assigned';
+							const comparison = valueA.localeCompare(valueB, undefined, { sensitivity: 'base', numeric: true }); return sortDirection === 'ascending' ? comparison : -comparison;
+						});
+						for (const person of sortedPeople) {
 							const name = person.attributes.name ?? `${person.attributes.first_name ?? ''} ${person.attributes.last_name ?? ''}`.trim();
 							const saved = settings.get(person.id) ?? { owner_id: session.user.id, planning_center_person_id: person.id, active: false, skill_level: null };
 							if (!name.toLowerCase().includes(query) || (!showInactive.checked && !saved.active)) continue;
@@ -169,6 +180,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							row.append(nameCell, instrumentCell, statusCell, tierCell, stateCell); tbody.append(row);
 						}
 					};
+					const setSort = (column: 'musician' | 'instrument') => {
+						if (sortColumn === column) sortDirection = sortDirection === 'ascending' ? 'descending' : 'ascending'; else { sortColumn = column; sortDirection = 'ascending'; }
+						musicianHeading.setAttribute('aria-sort', sortColumn === 'musician' ? sortDirection : 'none'); instrumentHeading.setAttribute('aria-sort', sortColumn === 'instrument' ? sortDirection : 'none');
+						sortMusician.querySelector('span')!.textContent = sortColumn === 'musician' ? (sortDirection === 'ascending' ? '↑' : '↓') : '↕'; sortInstrument.querySelector('span')!.textContent = sortColumn === 'instrument' ? (sortDirection === 'ascending' ? '↑' : '↓') : '↕'; render();
+					};
+					sortMusician.addEventListener('click', () => setSort('musician')); sortInstrument.addEventListener('click', () => setSort('instrument'));
 					const personName = (id: string) => {
 						const person = people.find((item) => item.id === id);
 						return person?.attributes.name ?? (person ? `${person.attributes.first_name ?? ''} ${person.attributes.last_name ?? ''}`.trim() : `Planning Center person ${id}`);
