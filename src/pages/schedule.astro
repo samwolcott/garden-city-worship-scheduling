@@ -41,6 +41,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							<li>People with fewer assignments in this suggested range are favored.</li>
 							<li>Planning Center cadence preferences are respected: monthly aims for about 3 weeks between dates; every-other-week aims for about 12 days.</li>
 							<li>The scheduler favors the tier used least in that week to spread A, B, and C musicians equitably.</li>
+							<li>A musician assigned to Worship Leader and a secondary instrument can fill both positions that Sunday, while counting as one person in the rotation.</li>
 							<li>Weekly instrument minimums are filled from the default lineup plus any Sunday overrides.</li>
 						</ul>
 					</section>
@@ -207,6 +208,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								]);
 								const positionIds = new Map<string, string[]>();
 								for (const assignment of assignments) { const personId = assignment.relationships?.person?.data?.id; const positionId = assignment.relationships?.team_position?.data?.id; if (personId && positionId) positionIds.set(personId, [...(positionIds.get(personId) ?? []), positionId]); }
+								for (const [date, existing] of existingByDate) {
+									const remaining = slotsByDate.get(date) ?? [];
+									for (const leader of [...existing].filter((member) => member.positionName.toLowerCase().includes('worship leader'))) {
+										if (existing.some((member) => member !== leader && member.personId === leader.personId)) continue;
+										const secondaryIndex = remaining.findIndex((slot) => !slot.positionName.toLowerCase().includes('worship leader') && (positionIds.get(leader.personId) ?? []).includes(slot.positionId));
+										if (secondaryIndex < 0) continue;
+										const [secondary] = remaining.splice(secondaryIndex, 1); existing.push({ ...leader, positionName: secondary.positionName, fillsRequirement: true });
+									}
+								}
 								const eligiblePeople = people.filter((person) => settings.get(person.id)?.active && settings.get(person.id)?.skill_level);
 								const availability = await Promise.all(eligiblePeople.map(async (person) => {
 									const [blocks, preferences] = await Promise.all([fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts?filter=future&per_page=100`), fetchAll<Resource>(`/services/v2/people/${person.id}/scheduling_preferences?per_page=100`)]);
@@ -228,11 +238,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					});
 
 					publishButton.addEventListener('click', async () => {
-						const pending = draftRows.filter((row) => !row.published_at); if (!pending.length) return;
+						const pending = draftRows.filter((row) => !row.published_at).sort((a, b) => Number(b.position_name.toLowerCase().includes('worship leader')) - Number(a.position_name.toLowerCase().includes('worship leader'))); if (!pending.length) return;
 						publishButton.disabled = true; generateButton.disabled = true; message.classList.remove('error-notice'); message.textContent = `Checking ${pending.length} assignment${pending.length === 1 ? '' : 's'} and adding placeholders…`;
 						let added = 0; let existing = 0;
 						try {
 							for (const row of pending) {
+								const publishedRole = draftRows.find((item) => item !== row && item.planning_center_plan_id === row.planning_center_plan_id && item.planning_center_person_id === row.planning_center_person_id && item.planning_center_team_id === row.planning_center_team_id && item.published_at);
+								if (publishedRole) { const now = new Date().toISOString(); const { error } = await supabase.from('draft_assignments').update({ planning_center_plan_person_id: publishedRole.planning_center_plan_person_id, published_at: now }).eq('id', row.id); if (error) throw error; row.planning_center_plan_person_id = publishedRole.planning_center_plan_person_id; row.published_at = now; continue; }
 								const serviceTypeId = teamServiceTypes.get(row.planning_center_team_id); if (!serviceTypeId) throw new Error('A Planning Center service type is missing. Generate the schedule again.');
 								const path = `/services/v2/service_types/${serviceTypeId}/plans/${row.planning_center_plan_id}/team_members`;
 								const current = await fetchAll<Resource>(`${path}?where[team_id]=${encodeURIComponent(row.planning_center_team_id)}&per_page=100`);

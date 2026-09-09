@@ -22,6 +22,8 @@ const preferenceGap = (preference = '') => {
 	return 0;
 };
 
+const isWorshipLeader = (positionName: string) => positionName.toLowerCase().includes('worship leader');
+
 export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, candidates: Candidate[], pairRules: RequiredPairRule[], existingByDate = new Map<string, ExistingAssignment[]>()): WeekSuggestion[] {
 	const eligible = new Map(candidates.filter((person) => isEligibleForScheduling(person)).map((person) => [person.id, person]));
 	const history = new Map<string, string[]>();
@@ -32,42 +34,49 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 		const existing = existingByDate.get(date) ?? [];
 		const scheduled = new Set(existing.map((assignment) => assignment.personId));
 		const tierCounts = new Map<SkillLevel, number>([['A', 0], ['B', 0], ['C', 0]]);
+		const countedExisting = new Set<string>();
 		for (const assignment of existing) {
+			if (countedExisting.has(assignment.personId)) continue;
+			countedExisting.add(assignment.personId);
 			history.set(assignment.personId, [...(history.get(assignment.personId) ?? []), date]);
 			if (assignment.tier) tierCounts.set(assignment.tier, (tierCounts.get(assignment.tier) ?? 0) + 1);
 		}
 		while (open.length) {
-			let best: { people: Candidate[]; slotIndexes: number[]; score: number } | undefined;
+			let best: { people: Candidate[]; placements: { person: Candidate; slotIndex: number }[]; score: number } | undefined;
 			for (const person of eligible.values()) {
 				if (scheduled.has(person.id) || person.blockedDates.includes(date)) continue;
 				const groupIds = [...requiredGroupFor(person.id, pairRules)].filter((id) => !scheduled.has(id));
 				const group = groupIds.map((id) => eligible.get(id));
 				if (group.some((member) => !member || member.blockedDates.includes(date) || scheduled.has(member.id))) continue;
-				const slotIndexes: number[] = [];
+				const placements: { person: Candidate; slotIndex: number }[] = [];
 				for (const member of group as Candidate[]) {
-					const index = open.findIndex((slot, i) => !slotIndexes.includes(i) && member.positionIds.includes(slot.positionId));
-					if (index < 0) { slotIndexes.length = 0; break; }
-					slotIndexes.push(index);
+					const index = open.findIndex((slot, i) => !placements.some((placement) => placement.slotIndex === i) && member.positionIds.includes(slot.positionId));
+					if (index < 0) { placements.length = 0; break; }
+					placements.push({ person: member, slotIndex: index });
+					const firstSlot = open[index];
+					const secondIndex = open.findIndex((slot, i) => !placements.some((placement) => placement.slotIndex === i) && member.positionIds.includes(slot.positionId) && isWorshipLeader(slot.positionName) !== isWorshipLeader(firstSlot.positionName));
+					if (secondIndex >= 0) placements.push({ person: member, slotIndex: secondIndex });
 				}
-				if (!slotIndexes.length) continue;
+				if (!placements.length) continue;
 				const score = (group as Candidate[]).reduce((total, member) => {
 					const prior = history.get(member.id) ?? [];
 					const last = prior.at(-1);
 					const gapDays = last ? (Date.parse(date) - Date.parse(last)) / 86400000 : Infinity;
 					return total + prior.length * 100 + (gapDays < 7 ? 1000 : 0) + (gapDays < preferenceGap(member.preference) ? 500 : 0) + (tierCounts.get(member.skill_level!) ?? 0) * 12;
 				}, 0);
-				if (!best || score < best.score) best = { people: group as Candidate[], slotIndexes, score };
+				if (!best || score < best.score) best = { people: group as Candidate[], placements, score };
 			}
 			if (!best) break;
-			const chosenSlots = best.slotIndexes.map((index) => open[index]);
-			best.people.forEach((person, index) => {
-				const slot = chosenSlots[index];
+			for (const { person, slotIndex } of best.placements) {
+				const slot = open[slotIndex];
 				assignments.push({ ...slot, personId: person.id, personName: person.name, tier: person.skill_level! });
+			}
+			for (const person of best.people) {
 				scheduled.add(person.id);
 				history.set(person.id, [...(history.get(person.id) ?? []), date]);
 				tierCounts.set(person.skill_level!, (tierCounts.get(person.skill_level!) ?? 0) + 1);
-			});
-			best.slotIndexes.sort((a, b) => b - a).forEach((index) => open.splice(index, 1));
+			}
+			best.placements.map((placement) => placement.slotIndex).sort((a, b) => b - a).forEach((index) => open.splice(index, 1));
 		}
 		results.push({ date, assignments, unfilled: open });
 	}
