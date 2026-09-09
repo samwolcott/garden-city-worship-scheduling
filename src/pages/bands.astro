@@ -38,7 +38,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 		<script>
 			import { getSupabase, supabaseConfigured } from '../lib/supabase';
-			type PcoTeam = { id: string; attributes: { name?: string }; relationships?: { service_type?: { data?: { id?: string } } } };
+			type PcoTeam = { id: string; attributes: { name?: string; archived_at?: string | null; deleted_at?: string | null }; relationships?: { service_type?: { data?: { id?: string } } } };
 			type PcoPosition = { id: string; attributes: { name?: string; sequence?: number } };
 			type PcoPlan = { id: string; attributes: { sort_date?: string; title?: string; dates?: string } };
 			type Requirement = { id?: string; owner_id: string; planning_center_team_position_id: string; position_name: string; required_count: number };
@@ -147,7 +147,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					};
 
 					try {
-						const teams = await fetchAll<PcoTeam>('/services/v2/teams?per_page=100');
+						const teams = (await fetchAll<PcoTeam>('/services/v2/teams?per_page=100')).filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at);
 						teamsById = new Map(teams.map((team) => [team.id, team]));
 						teamSelect.replaceChildren(new Option('Choose a team', ''));
 						for (const team of teams) teamSelect.add(new Option(team.attributes.name ?? `Team ${team.id}`, team.id));

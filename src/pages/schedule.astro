@@ -84,7 +84,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					const loadPlanDateOptions = async () => {
 						try {
 							message.textContent = 'Loading upcoming Sunday plans from Planning Center…';
-							const teams = await fetchAll<Resource>('/services/v2/teams?per_page=100');
+							const teams = (await fetchAll<Resource>('/services/v2/teams?per_page=100')).filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at);
 							const serviceTypeIds = [...new Set(teams.map((team) => team.relationships?.service_type?.data?.id).filter((id): id is string => Boolean(id)))];
 							const planGroups = await Promise.all(serviceTypeIds.map((id) => fetchAll<Resource>(`/services/v2/service_types/${encodeURIComponent(id)}/plans?filter=future&order=sort_date&per_page=100`)));
 							const dates = [...new Set(planGroups.flat().map((plan) => String(plan.attributes.sort_date ?? '').slice(0, 10)).filter((date) => date && new Date(`${date}T12:00:00`).getDay() === 0))].sort();
@@ -128,12 +128,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								fetchAll<Resource>('/services/v2/teams?per_page=100'),
 							]);
 							if (requirementsResult.error) throw requirementsResult.error; if (settingsResult.error) throw settingsResult.error; if (pairsResult.error) throw pairsResult.error;
-							const requirements = (requirementsResult.data ?? []) as Requirement[];
+							const activeTeams = teams.filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at);
+							const activeTeamIds = new Set(activeTeams.map((team) => team.id));
+							const requirements = ((requirementsResult.data ?? []) as Requirement[]).filter((item) => activeTeamIds.has(item.planning_center_team_id));
 							if (!requirements.length) throw new Error('No weekly instrument requirements are configured in this range. Add them on Weekly bands first.');
 							const settings = new Map(((settingsResult.data ?? []) as Setting[]).map((item) => [item.planning_center_person_id, item]));
 							const pairs = (pairsResult.data ?? []) as Pair[];
-							const teamNames = new Map(teams.map((team) => [team.id, String(team.attributes.name ?? `Team ${team.id}`)]));
-							teamServiceTypes = new Map(teams.map((team): [string, string] => [team.id, team.relationships?.service_type?.data?.id ?? '']).filter((entry) => entry[1]));
+							const teamNames = new Map(activeTeams.map((team) => [team.id, String(team.attributes.name ?? `Team ${team.id}`)]));
+							teamServiceTypes = new Map(activeTeams.map((team): [string, string] => [team.id, team.relationships?.service_type?.data?.id ?? '']).filter((entry) => entry[1]));
 							const teamIds = [...new Set(requirements.map((item) => item.planning_center_team_id))]; renderedWeeks = [];
 							for (const teamId of teamIds) {
 								const teamRequirements = requirements.filter((item) => item.planning_center_team_id === teamId);

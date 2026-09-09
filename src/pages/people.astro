@@ -52,7 +52,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 		<script>
 			import { getSupabase, supabaseConfigured } from '../lib/supabase';
 			type PcoPerson = { id: string; attributes: { name?: string; first_name?: string; last_name?: string } };
-			type PcoTeam = { id: string; attributes: { name?: string } };
+			type PcoTeam = { id: string; attributes: { name?: string; archived_at?: string | null; deleted_at?: string | null } };
 			type PcoServiceType = { id: string; attributes: { name?: string } };
 			type PcoPosition = { id: string; attributes: { name?: string } };
 			type PcoPositionAssignment = { relationships?: { person?: { data?: { id?: string } }; team_position?: { data?: { id?: string } } } };
@@ -187,6 +187,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const nestedTeams = await Promise.all(serviceTypes.map((serviceType) => fetchAll<PcoTeam>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)));
 							teams = [...new Map(nestedTeams.flat().map((team) => [team.id, team])).values()];
 						}
+						teams = teams.filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at);
 						teamSelect.replaceChildren(new Option('Choose a team', ''));
 						for (const team of teams) teamSelect.add(new Option(team.attributes.name ?? `Team ${team.id}`, team.id));
 						teamSelect.disabled = !teams.length;
