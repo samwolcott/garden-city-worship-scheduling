@@ -65,6 +65,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 		<script>
 			import { getSupabase, supabaseConfigured } from '../lib/supabase';
 			import { suggestWeeks, type Candidate, type Slot, type WeekSuggestion } from '../lib/scheduler/generate';
+			import { requiredGroupFor } from '../lib/scheduler/eligibility';
 			type Resource = { id: string; attributes: Record<string, any>; relationships?: Record<string, { data?: { id?: string } }> };
 			type Requirement = { service_date: string; planning_center_team_id: string; planning_center_team_position_id: string; position_name: string; required_count: number };
 			type DefaultRequirement = Omit<Requirement, 'service_date'>;
@@ -92,6 +93,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					let draftRows: DraftRow[] = [];
 					let renderedWeeks: RenderedWeek[] = [];
 					let teamServiceTypes = new Map<string, string>();
+					let candidatesByTeam = new Map<string, Candidate[]>();
+					let activePairs: Pair[] = [];
 					const savedTeamSettings = await supabase.from('team_settings').select('planning_center_team_id,visible');
 					if (savedTeamSettings.error) { message.classList.add('error-notice'); message.textContent = savedTeamSettings.error.message; throw savedTeamSettings.error; }
 					const hiddenTeamIds = new Set((savedTeamSettings.data ?? []).filter((item) => !item.visible).map((item) => item.planning_center_team_id));
@@ -145,8 +148,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const plan = document.createElement(week.planUrl ? 'a' : 'span'); plan.textContent = week.planId ? 'Planning Center plan found' : 'No matching plan'; if (week.planUrl) { (plan as HTMLAnchorElement).href = week.planUrl; (plan as HTMLAnchorElement).target = '_blank'; }
 							heading.append(title, plan); card.append(heading);
 							const list = document.createElement('ul'); list.className = 'assignment-list';
-							for (const assignment of week.existing) { const item = document.createElement('li'); item.className = 'existing-assignment'; item.innerHTML = `<span><strong>${assignment.positionName}</strong>${assignment.personName}</span><span class="existing-chip">Already scheduled · ${assignment.status}</span>`; list.append(item); }
-							for (const assignment of week.assignments) { const item = document.createElement('li'); item.innerHTML = `<span><strong>${assignment.positionName}</strong>${assignment.personName}</span><span class="tier-chip">Tier ${assignment.tier}</span>`; list.append(item); }
+							for (const assignment of week.existing) { const item = document.createElement('li'); item.className = 'existing-assignment'; item.innerHTML = `<span><strong>${assignment.positionName}</strong><span class="person-with-reason">${assignment.personName}<span class="reason-tooltip" tabindex="0" aria-label="Why ${assignment.personName} is here">i<span role="tooltip">Already scheduled in Planning Center with status: ${assignment.status}.</span></span></span></span><span class="existing-chip">Already scheduled · ${assignment.status}</span>`; list.append(item); }
+							for (const assignment of week.assignments) {
+								const item = document.createElement('li'); const identity = document.createElement('span'); const position = document.createElement('strong'); position.textContent = assignment.positionName; const personLine = document.createElement('span'); personLine.className = 'person-with-reason'; personLine.append(document.createTextNode(assignment.personName));
+								const tooltip = document.createElement('span'); tooltip.className = 'reason-tooltip'; tooltip.tabIndex = 0; tooltip.setAttribute('aria-label', `Why ${assignment.personName} was suggested`); tooltip.textContent = 'i'; const tooltipBody = document.createElement('span'); tooltipBody.setAttribute('role', 'tooltip'); const reasons = document.createElement('ul'); for (const reason of assignment.reasons) { const reasonItem = document.createElement('li'); reasonItem.textContent = reason; reasons.append(reasonItem); } tooltipBody.append(reasons); tooltip.append(tooltipBody); personLine.append(tooltip); identity.append(position, personLine);
+								const actions = document.createElement('span'); actions.className = 'assignment-actions'; const tier = document.createElement('span'); tier.className = 'tier-chip'; tier.textContent = `Tier ${assignment.tier}`; const swap = document.createElement('button'); swap.type = 'button'; swap.className = 'swap-button'; swap.textContent = 'Swap';
+								const hasPairedRule = requiredGroupFor(assignment.personId, activePairs).size > 1 && !week.assignments.some((other) => other !== assignment && other.personId === assignment.personId);
+								if (hasPairedRule) { swap.disabled = true; swap.title = 'This musician belongs to a required pair and cannot be swapped individually.'; }
+								swap.addEventListener('click', () => {
+									const occupied = new Set([...week.existing.map((member) => member.personId), ...week.assignments.filter((other) => other !== assignment && other.personId !== assignment.personId).map((other) => other.personId)]);
+									const alternatives = (candidatesByTeam.get(week.teamId) ?? []).filter((candidate) => candidate.id !== assignment.personId && !occupied.has(candidate.id) && !candidate.blockedDates.includes(week.date) && candidate.positionIds.includes(assignment.positionId) && [...requiredGroupFor(candidate.id, activePairs)].every((id) => id === candidate.id || occupied.has(id)));
+									if (!alternatives.length) { message.textContent = `No other eligible, available ${assignment.positionName} musicians can be swapped in without breaking a scheduling rule.`; return; }
+									const editor = document.createElement('span'); editor.className = 'swap-editor'; const select = document.createElement('select'); select.setAttribute('aria-label', `Replacement for ${assignment.personName}`); select.append(new Option('Choose replacement', ''), ...alternatives.sort((a, b) => a.name.localeCompare(b.name)).map((candidate) => new Option(`${candidate.name} · Tier ${candidate.skill_level}`, candidate.id))); const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'text-button'; cancel.textContent = 'Cancel'; cancel.addEventListener('click', renderSchedule); select.addEventListener('change', async () => { if (!select.value) return; const replacement = alternatives.find((candidate) => candidate.id === select.value)!; select.disabled = true; cancel.disabled = true; const row = draftRows.find((draft) => draft.planning_center_plan_id === week.planId && draft.planning_center_team_id === week.teamId && draft.planning_center_person_id === assignment.personId && draft.position_name === assignment.positionName && !draft.published_at); if (row) { const { error } = await supabase.from('draft_assignments').update({ planning_center_person_id: replacement.id, person_name: replacement.name, manually_selected: true }).eq('id', row.id); if (error) { message.classList.add('error-notice'); message.textContent = error.message; renderSchedule(); return; } row.planning_center_person_id = replacement.id; row.person_name = replacement.name; } assignment.personId = replacement.id; assignment.personName = replacement.name; assignment.tier = replacement.skill_level!; assignment.reasons = [`Manually swapped in for ${assignment.positionName}`, `Assigned to ${assignment.positionName} in Planning Center`, 'No Planning Center blockout on this date']; message.classList.remove('error-notice'); message.textContent = `${replacement.name} replaced the original ${assignment.positionName} suggestion for ${new Date(`${week.date}T12:00:00`).toLocaleDateString()}.`; renderSchedule(); }); editor.append(select, cancel); actions.replaceChildren(editor);
+								});
+								actions.append(tier, swap); item.append(identity, actions); list.append(item);
+							}
 							for (const slot of week.unfilled) { const item = document.createElement('li'); item.className = 'unfilled'; item.innerHTML = `<span><strong>${slot.positionName}</strong>No eligible, available musician</span><span>Unfilled</span>`; list.append(item); }
 							card.append(list); results.append(card);
 						}
@@ -174,7 +190,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const defaultRequirements = ((defaultsResult.data ?? []) as DefaultRequirement[]).filter((item) => activeTeamIds.has(item.planning_center_team_id));
 							if (!requirements.length && !defaultRequirements.length) throw new Error('No instrument requirements are configured. Add the default lineup on Weekly bands first.');
 							const settings = new Map(((settingsResult.data ?? []) as Setting[]).map((item) => [item.planning_center_person_id, item]));
-							const pairs = (pairsResult.data ?? []) as Pair[];
+							const pairs = (pairsResult.data ?? []) as Pair[]; activePairs = pairs;
 							const teamNames = new Map(activeTeams.map((team) => [team.id, String(team.attributes.name ?? `Team ${team.id}`)]));
 							teamServiceTypes = new Map(activeTeams.map((team): [string, string] => [team.id, team.relationships?.service_type?.data?.id ?? '']).filter((entry) => entry[1]));
 							const teamIds = [...new Set([...requirements, ...defaultRequirements].map((item) => item.planning_center_team_id))]; renderedWeeks = [];
@@ -223,6 +239,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 									const [blocks, preferences] = await Promise.all([fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts?filter=future&per_page=100`), fetchAll<Resource>(`/services/v2/people/${person.id}/scheduling_preferences?per_page=100`)]);
 									const setting = settings.get(person.id)!; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], blockedDates: blockedDates(blocks, dates), preference: preferences[0]?.attributes.preference, scheduleEverySunday: setting.schedule_every_sunday } as Candidate;
 								}));
+								candidatesByTeam.set(teamId, availability);
 								const existingForScheduler = new Map([...existingByDate].map(([date, members]) => [date, members.map((member) => ({ personId: member.personId, tier: settings.get(member.personId)?.skill_level ?? null }))]));
 								for (const week of suggestWeeks(dates, slotsByDate, availability, pairs, existingForScheduler)) { const plan = plansByDate.get(week.date); renderedWeeks.push({ ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url, existing: existingByDate.get(week.date) ?? [] }); }
 							}

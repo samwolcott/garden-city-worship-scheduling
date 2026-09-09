@@ -12,7 +12,7 @@ export interface Candidate {
 }
 
 export interface Slot { positionId: string; positionName: string; }
-export interface SuggestedAssignment extends Slot { personId: string; personName: string; tier: SkillLevel; }
+export interface SuggestedAssignment extends Slot { personId: string; personName: string; tier: SkillLevel; reasons: string[]; }
 export interface WeekSuggestion { date: string; assignments: SuggestedAssignment[]; unfilled: Slot[]; }
 export interface ExistingAssignment { personId: string; tier: SkillLevel | null; }
 
@@ -72,7 +72,19 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 			if (!best) break;
 			for (const { person, slotIndex } of best.placements) {
 				const slot = open[slotIndex];
-				assignments.push({ ...slot, personId: person.id, personName: person.name, tier: person.skill_level! });
+				const prior = history.get(person.id) ?? [];
+				const last = prior.at(-1);
+				const gapDays = last ? Math.round((Date.parse(date) - Date.parse(last)) / 86400000) : undefined;
+				const reasons = [`Assigned to ${slot.positionName} in Planning Center`, 'No Planning Center blockout on this date'];
+				if (person.scheduleEverySunday && isWorshipLeader(slot.positionName)) reasons.push('Marked Every Sunday for Worship Leader');
+				if (person.preference) reasons.push(`Planning Center preference: ${person.preference}${gapDays ? `; ${gapDays} days since the prior assignment` : ''}`);
+				else reasons.push('No Planning Center cadence preference set');
+				const lowestTierCount = Math.min(...tierCounts.values());
+				if ((tierCounts.get(person.skill_level!) ?? 0) === lowestTierCount) reasons.push(`Tier ${person.skill_level} supported the week’s tier balance`);
+				if (prior.length === 0) reasons.push('Had no earlier assignment in this suggested range'); else reasons.push(`${prior.length} earlier assignment${prior.length === 1 ? '' : 's'} in this suggested range`);
+				if (best.people.length > 1) reasons.push('Placed with a required scheduling partner');
+				if (best.placements.filter((placement) => placement.person.id === person.id).length > 1) reasons.push('Also covers Worship Leader or a secondary instrument');
+				assignments.push({ ...slot, personId: person.id, personName: person.name, tier: person.skill_level!, reasons });
 			}
 			for (const person of best.people) {
 				scheduled.add(person.id);
