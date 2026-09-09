@@ -15,7 +15,7 @@ export interface Slot { positionId: string; positionName: string; }
 export interface SuggestedAssignment extends Slot { personId: string; personName: string; tier: SkillLevel; reasons: string[]; }
 export interface UnfilledSlot extends Slot { reasons: string[]; }
 export interface WeekSuggestion { date: string; assignments: SuggestedAssignment[]; unfilled: UnfilledSlot[]; }
-export interface ExistingAssignment { personId: string; tier: SkillLevel | null; positionId?: string; }
+export interface ExistingAssignment { personId: string; tier: SkillLevel | null; positionId?: string; countsTowardHistory?: boolean; }
 
 export const preferenceGap = (preference = '') => {
 	const value = preference.toLowerCase();
@@ -49,6 +49,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 		const tierCounts = new Map<SkillLevel, number>([['A', 0], ['B', 0], ['C', 0]]);
 		const countedExisting = new Set<string>();
 		for (const assignment of existing) {
+			if (assignment.countsTowardHistory === false) continue;
 			if (assignment.positionId) { const key = `${assignment.personId}:${assignment.positionId}`; positionUseCounts.set(key, (positionUseCounts.get(key) ?? 0) + 1); }
 			if (countedExisting.has(assignment.personId)) continue;
 			countedExisting.add(assignment.personId);
@@ -92,7 +93,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 					const categories = new Map<string, string[]>(); const add = (reason: string, name: string) => categories.set(reason, [...(categories.get(reason) ?? []), name]);
 					for (const candidate of qualified) {
 						const assignedDates = history.get(candidate.id) ?? []; const preference = positionPreference(candidate, slot.positionId); const gap = preferenceGap(preference);
-						if (scheduled.has(candidate.id)) add('Already scheduled on this Sunday', candidate.name);
+						if (scheduled.has(candidate.id)) add('Already present on this Planning Center plan', candidate.name);
 						else if (candidate.blockedDates.includes(date)) add('Planning Center blockout', candidate.name);
 						else if (preference.toLowerCase() === 'unavailable') add(`Planning Center ${slot.positionName} preference is Unavailable`, candidate.name);
 						else if (gap > 0 && assignedDates.some((assignedDate) => Math.abs(Date.parse(date) - Date.parse(assignedDate)) / 86400000 < gap)) add(`Planning Center cadence (${preference})`, candidate.name);

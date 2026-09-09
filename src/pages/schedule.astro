@@ -37,7 +37,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						<p class="rule-kind">Balanced when possible</p>
 						<h2>Rotation &amp; band mix</h2>
 						<ul>
-							<li>Existing Planning Center assignments fill their matching positions first and count toward the week’s balance.</li>
+							<li>Existing Confirmed Planning Center assignments fill their matching positions first.</li>
+							<li>Unconfirmed and Declined assignments remain visible, but their positions stay open for replacement suggestions.</li>
 							<li>Prior confirmed and unconfirmed Planning Center assignments—including placeholders—are included in the lookback.</li>
 							<li>People with fewer assignments in this suggested range are favored.</li>
 							<li>No musician exceeds the configured monthly maximum; people marked Every Sunday are exempt.</li>
@@ -77,7 +78,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			type Setting = { planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null; schedule_every_sunday: boolean };
 			type Pair = { person_one_id: string; person_two_id: string };
 			type DraftRow = { id: string; planning_center_plan_id: string; planning_center_person_id: string; planning_center_team_id: string; position_name: string; person_name: string; planning_center_plan_person_id: string | null; published_at: string | null };
-			type ExistingPlanAssignment = { personId: string; personName: string; positionName: string; status: string; fillsRequirement: boolean; positionId?: string };
+			type ExistingPlanAssignment = { personId: string; personName: string; positionName: string; status: 'Confirmed' | 'Unconfirmed' | 'Declined'; fillsRequirement: boolean; positionId?: string };
 			type RenderedWeek = WeekSuggestion & { teamId: string; teamName: string; planId?: string; planUrl?: string; existing: ExistingPlanAssignment[] };
 
 			const startsOn = document.querySelector<HTMLSelectElement>('#starts-on')!;
@@ -152,6 +153,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						const start = String(block.attributes.starts_at ?? '').slice(0, 10); const end = String(block.attributes.ends_at ?? start).slice(0, 10);
 						return start && date >= start && date <= end;
 					}));
+					const planStatus = (status: unknown): ExistingPlanAssignment['status'] => { const value = String(status ?? '').toLowerCase(); if (value === 'c' || value === 'confirmed') return 'Confirmed'; if (value === 'd' || value === 'declined') return 'Declined'; return 'Unconfirmed'; };
 					const renderSchedule = () => {
 						results.replaceChildren();
 						for (const week of renderedWeeks) {
@@ -161,7 +163,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const plan = document.createElement(week.planUrl ? 'a' : 'span'); plan.textContent = week.planId ? 'Planning Center plan found' : 'No matching plan'; if (week.planUrl) { (plan as HTMLAnchorElement).href = week.planUrl; (plan as HTMLAnchorElement).target = '_blank'; }
 							heading.append(title, plan); card.append(heading);
 							const list = document.createElement('ul'); list.className = 'assignment-list';
-							for (const assignment of week.existing) { const item = document.createElement('li'); item.className = 'existing-assignment'; item.innerHTML = `<span><strong>${assignment.positionName}</strong><span class="person-with-reason">${assignment.personName}<span class="reason-tooltip" tabindex="0" aria-label="Why ${assignment.personName} is here">i<span role="tooltip">Already scheduled in Planning Center with status: ${assignment.status}.</span></span></span></span><span class="existing-chip">Already scheduled · ${assignment.status}</span>`; list.append(item); }
+							for (const assignment of week.existing) { const item = document.createElement('li'); item.className = `existing-assignment is-${assignment.status.toLowerCase()}`; item.innerHTML = `<span><strong>${assignment.positionName}</strong><span class="person-with-reason">${assignment.personName}<span class="reason-tooltip" tabindex="0" aria-label="Why ${assignment.personName} is here">i<span role="tooltip">Already in Planning Center with status: ${assignment.status}.${assignment.fillsRequirement ? ' This confirmed assignment fills the required position.' : ' A replacement is still being suggested for this position.'}</span></span></span></span><span class="existing-chip is-${assignment.status.toLowerCase()}">${assignment.status}</span>`; list.append(item); }
 							for (const assignment of week.assignments) {
 								const item = document.createElement('li'); const identity = document.createElement('span'); const position = document.createElement('strong'); position.textContent = assignment.positionName; const personLine = document.createElement('span'); personLine.className = 'person-with-reason'; personLine.append(document.createTextNode(assignment.personName));
 								const tooltip = document.createElement('span'); tooltip.className = 'reason-tooltip'; tooltip.tabIndex = 0; tooltip.setAttribute('aria-label', `Why ${assignment.personName} was suggested`); tooltip.textContent = 'i'; const tooltipBody = document.createElement('span'); tooltipBody.setAttribute('role', 'tooltip'); const reasons = document.createElement('ul'); for (const reason of assignment.reasons) { const reasonItem = document.createElement('li'); reasonItem.textContent = reason; reasons.append(reasonItem); } tooltipBody.append(reasons); tooltip.append(tooltipBody); personLine.append(tooltip); identity.append(position, personLine);
@@ -222,14 +224,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								const existingByDate = new Map<string, ExistingPlanAssignment[]>();
 								await Promise.all(dates.map(async (date) => {
 									const plan = plansByDate.get(date); if (!plan) { existingByDate.set(date, []); return; }
-									const members = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans/${plan.id}/team_members?where[team_id]=${encodeURIComponent(teamId)}&per_page=100`);
-									const scheduledMembers = members.filter((member) => !['d', 'declined'].includes(String(member.attributes.status ?? '').toLowerCase()));
+									const scheduledMembers = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans/${plan.id}/team_members?where[team_id]=${encodeURIComponent(teamId)}&per_page=100`);
 									const remaining = [...(slotsByDate.get(date) ?? [])];
 									const existing = scheduledMembers.map((member) => {
 										const positionName = String(member.attributes.team_position_name ?? 'Team member');
-										const slotIndex = remaining.findIndex((slot) => slot.positionName.toLowerCase() === positionName.toLowerCase());
-										const matchedSlot = slotIndex >= 0 ? remaining[slotIndex] : undefined; const fillsRequirement = Boolean(matchedSlot); if (fillsRequirement) remaining.splice(slotIndex, 1);
-										return { personId: member.relationships?.person?.data?.id ?? '', personName: String(member.attributes.name ?? 'Scheduled musician'), positionName, status: String(member.attributes.status ?? 'Scheduled'), fillsRequirement, positionId: matchedSlot?.positionId };
+										const status = planStatus(member.attributes.status); const slotIndex = remaining.findIndex((slot) => slot.positionName.toLowerCase() === positionName.toLowerCase());
+										const matchedSlot = slotIndex >= 0 ? remaining[slotIndex] : undefined; const fillsRequirement = status === 'Confirmed' && Boolean(matchedSlot); if (fillsRequirement) remaining.splice(slotIndex, 1);
+										return { personId: member.relationships?.person?.data?.id ?? '', personName: String(member.attributes.name ?? 'Scheduled musician'), positionName, status, fillsRequirement, positionId: matchedSlot?.positionId };
 									}).filter((member) => member.personId);
 									existingByDate.set(date, existing); slotsByDate.set(date, remaining);
 								}));
@@ -242,7 +243,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								for (const assignment of assignments) { const personId = assignment.relationships?.person?.data?.id; const positionId = assignment.relationships?.team_position?.data?.id; if (personId && positionId) { positionIds.set(personId, [...(positionIds.get(personId) ?? []), positionId]); const preference = String(assignment.attributes.schedule_preference ?? ''); preferencesByPerson.set(personId, { ...(preferencesByPerson.get(personId) ?? {}), [positionId]: preference }); } }
 								for (const [date, existing] of existingByDate) {
 									const remaining = slotsByDate.get(date) ?? [];
-									for (const leader of [...existing].filter((member) => member.positionName.toLowerCase().includes('worship leader'))) {
+									for (const leader of [...existing].filter((member) => member.fillsRequirement && member.positionName.toLowerCase().includes('worship leader'))) {
 										if (existing.some((member) => member !== leader && member.personId === leader.personId)) continue;
 										const secondaryIndex = remaining.findIndex((slot) => !slot.positionName.toLowerCase().includes('worship leader') && (positionIds.get(leader.personId) ?? []).includes(slot.positionId));
 										if (secondaryIndex < 0) continue;
@@ -263,7 +264,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								await Promise.all(priorPlans.map(async (plan) => { const date = String(plan.attributes.sort_date ?? '').slice(0, 10); const members = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans/${plan.id}/team_members?where[team_id]=${encodeURIComponent(teamId)}&per_page=100`); const seen = new Set<string>(); for (const member of members.filter((item) => !['d', 'declined'].includes(String(item.attributes.status ?? '').toLowerCase()))) { const personId = member.relationships?.person?.data?.id; if (!personId || seen.has(personId)) continue; seen.add(personId); priorHistory.set(personId, [...(priorHistory.get(personId) ?? []), date]); } }));
 								priorHistoryByTeam.set(teamId, priorHistory);
 								for (const [personId, assignedDates] of priorHistory) schedulingHistory.set(personId, [...new Set([...(schedulingHistory.get(personId) ?? []), ...assignedDates])].sort());
-								const existingForScheduler = new Map([...existingByDate].map(([date, members]) => [date, members.map((member) => ({ personId: member.personId, tier: settings.get(member.personId)?.skill_level ?? null, positionId: member.positionId }))]));
+								const existingForScheduler = new Map([...existingByDate].map(([date, members]) => [date, members.map((member) => ({ personId: member.personId, tier: settings.get(member.personId)?.skill_level ?? null, positionId: member.positionId, countsTowardHistory: member.status !== 'Declined' }))]));
 								const suggestions = suggestWeeks(dates, slotsByDate, availability, pairs, existingForScheduler, schedulingHistory, monthlyCap);
 								for (const week of suggestions) { const plan = plansByDate.get(week.date); const rendered = { ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url, existing: existingByDate.get(week.date) ?? [] }; renderedWeeks.push(rendered); for (const personId of new Set([...rendered.existing.map((member) => member.personId), ...rendered.assignments.map((member) => member.personId)])) schedulingHistory.set(personId, [...new Set([...(schedulingHistory.get(personId) ?? []), week.date])].sort()); }
 							}
