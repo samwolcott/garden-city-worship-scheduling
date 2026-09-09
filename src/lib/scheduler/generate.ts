@@ -7,7 +7,7 @@ export interface Candidate {
 	skill_level: SkillLevel | null;
 	positionIds: string[];
 	blockedDates: string[];
-	preference?: string;
+	preferencesByPosition?: Record<string, string>;
 	scheduleEverySunday?: boolean;
 }
 
@@ -18,9 +18,11 @@ export interface ExistingAssignment { personId: string; tier: SkillLevel | null;
 
 export const preferenceGap = (preference = '') => {
 	const value = preference.toLowerCase();
-	const weekCount = value.match(/every\s+(\d+)\s+weeks?/);
+	const weekCount = value.match(/every\s+(\d+)(?:st|nd|rd|th)?\s+weeks?/);
 	if (weekCount) return Number(weekCount[1]) * 7;
 	if (value.includes('other') || value.includes('2 week') || value.includes('two week') || value.includes('twice') && value.includes('month')) return 14;
+	if (value.includes('quarter')) return 91;
+	if (value.includes('three times') && value.includes('month')) return 9;
 	const monthCount = value.match(/every\s+(\d+)\s+months?/);
 	if (monthCount) return Number(monthCount[1]) * 28;
 	if (value.includes('month')) return 28;
@@ -29,6 +31,7 @@ export const preferenceGap = (preference = '') => {
 };
 
 const isWorshipLeader = (positionName: string) => positionName.toLowerCase().includes('worship leader');
+const positionPreference = (person: Candidate, positionId: string) => person.preferencesByPosition?.[positionId] ?? '';
 
 export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, candidates: Candidate[], pairRules: RequiredPairRule[], existingByDate = new Map<string, ExistingAssignment[]>(), initialHistory = new Map<string, string[]>()): WeekSuggestion[] {
 	const eligible = new Map(candidates.filter((person) => isEligibleForScheduling(person)).map((person) => [person.id, person]));
@@ -54,7 +57,6 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 				const groupIds = [...requiredGroupFor(person.id, pairRules)].filter((id) => !scheduled.has(id));
 				const group = groupIds.map((id) => eligible.get(id));
 				if (group.some((member) => !member || member.blockedDates.includes(date) || scheduled.has(member.id))) continue;
-				if ((group as Candidate[]).some((member) => { const last = (history.get(member.id) ?? []).at(-1); return Boolean(last) && (Date.parse(date) - Date.parse(last!)) / 86400000 < preferenceGap(member.preference); })) continue;
 				const placements: { person: Candidate; slotIndex: number }[] = [];
 				for (const member of group as Candidate[]) {
 					const weeklyLeaderIndex = member.scheduleEverySunday ? open.findIndex((slot, i) => !placements.some((placement) => placement.slotIndex === i) && member.positionIds.includes(slot.positionId) && isWorshipLeader(slot.positionName)) : -1;
@@ -66,6 +68,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 					if (secondIndex >= 0) placements.push({ person: member, slotIndex: secondIndex });
 				}
 				if (!placements.length) continue;
+				if (placements.some(({ person: member, slotIndex }) => { const preference = positionPreference(member, open[slotIndex].positionId); if (preference.toLowerCase() === 'unavailable') return true; const last = (history.get(member.id) ?? []).at(-1); return Boolean(last) && (Date.parse(date) - Date.parse(last!)) / 86400000 < preferenceGap(preference); })) continue;
 				const score = (group as Candidate[]).reduce((total, member) => {
 					const prior = history.get(member.id) ?? [];
 					const last = prior.at(-1);
@@ -83,8 +86,8 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 				const gapDays = last ? Math.round((Date.parse(date) - Date.parse(last)) / 86400000) : undefined;
 				const reasons = [`Assigned to ${slot.positionName} in Planning Center`, 'No Planning Center blockout on this date'];
 				if (person.scheduleEverySunday && isWorshipLeader(slot.positionName)) reasons.push('Marked Every Sunday for Worship Leader');
-				const preferredGap = preferenceGap(person.preference);
-				if (person.preference) reasons.push(`Planning Center serving preference: ${person.preference}${preferredGap ? ` (${preferredGap}-day minimum)` : ''}`);
+				const preference = positionPreference(person, slot.positionId); const preferredGap = preferenceGap(preference);
+				if (preference) reasons.push(`Planning Center ${slot.positionName} preference: ${preference}${preferredGap ? ` (${preferredGap}-day minimum)` : ''}`);
 				else reasons.push('No Planning Center serving-frequency preference set');
 				if (last) reasons.push(`Previous assignment considered: ${last}${gapDays !== undefined ? ` (${gapDays} days earlier)` : ''}`); else reasons.push('No earlier assignment found in the lookback period');
 				const lowestTierCount = Math.min(...tierCounts.values());
