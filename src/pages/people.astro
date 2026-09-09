@@ -14,11 +14,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 	<body>
 		<header class="site-header">
 			<a class="brand" href={`${base}/`}>Garden City <span>Worship Scheduler</span></a>
-			<nav><a aria-current="page" href={`${base}/people/`}>People</a></nav>
+			<nav><a aria-current="page" href={`${base}/people/`}>People</a><a href={`${base}/bands/`}>Weekly bands</a></nav>
 		</header>
 		<main class="people-page">
 			<section class="page-heading">
-				<div><p class="eyebrow">Private roster</p><h1>Musicians</h1><p class="lede">Only active musicians with an assigned tier can be considered by the scheduler.</p></div>
+				<div><p class="eyebrow">Private roster</p><h1>Musicians</h1><p class="lede">Only active musicians with an assigned band tier can be considered by the scheduler.</p></div>
 				<div class="summary"><strong id="active-count">0</strong><span>active</span></div>
 			</section>
 
@@ -31,7 +31,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			<p id="people-message" class="notice" role="status">Connecting to Planning Center…</p>
 			<div class="table-wrap" hidden>
 				<table>
-					<thead><tr><th>Musician</th><th>Status</th><th>Private tier</th><th>Save state</th></tr></thead>
+					<thead><tr><th>Musician</th><th>Instrument</th><th>Status</th><th>Band tier</th><th>Save state</th></tr></thead>
 					<tbody id="people-list"></tbody>
 				</table>
 			</div>
@@ -54,6 +54,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			type PcoPerson = { id: string; attributes: { name?: string; first_name?: string; last_name?: string } };
 			type PcoTeam = { id: string; attributes: { name?: string } };
 			type PcoServiceType = { id: string; attributes: { name?: string } };
+			type PcoPosition = { id: string; attributes: { name?: string } };
+			type PcoPositionAssignment = { relationships?: { person?: { data?: { id?: string } }; team_position?: { data?: { id?: string } } } };
 			type Setting = { planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null };
 			type PairRule = { id: string; person_one_id: string; person_two_id: string };
 
@@ -73,6 +75,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			let people: PcoPerson[] = [];
 			let settings = new Map<string, Setting>();
 			let pairRules: PairRule[] = [];
+			let instrumentsByPerson = new Map<string, string[]>();
 
 			if (!supabaseConfigured) {
 				message.textContent = 'Supabase is not configured yet.';
@@ -121,15 +124,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							if (!name.toLowerCase().includes(query) || (!showInactive.checked && !saved.active)) continue;
 							const row = document.createElement('tr');
 							const nameCell = document.createElement('td'); nameCell.textContent = name;
+							const instrumentCell = document.createElement('td'); instrumentCell.textContent = instrumentsByPerson.get(person.id)?.join(', ') || 'Not assigned';
 							const statusCell = document.createElement('td');
 							const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.checked = saved.active; toggle.setAttribute('aria-label', `Active: ${name}`); statusCell.append(toggle, document.createTextNode(toggle.checked ? ' Active' : ' Inactive'));
 							const tierCell = document.createElement('td');
-							const tier = document.createElement('select'); tier.setAttribute('aria-label', `Tier for ${name}`);
+							const tier = document.createElement('select'); tier.setAttribute('aria-label', `Band tier for ${name}`);
 							for (const [value, label] of [['', 'Not assigned'], ['A', 'A'], ['B', 'B'], ['C', 'C']]) tier.add(new Option(label, value, false, value === (saved.skill_level ?? '')));
 							tierCell.append(tier);
 							const stateCell = document.createElement('td'); stateCell.className = 'save-state'; stateCell.textContent = saved.active ? 'Eligible' : 'Excluded';
 							const save = async () => {
-								if (toggle.checked && !tier.value) { toggle.checked = false; stateCell.textContent = 'Choose a tier before activating'; return; }
+								if (toggle.checked && !tier.value) { toggle.checked = false; stateCell.textContent = 'Choose a band tier before activating'; return; }
 								stateCell.textContent = 'Saving…';
 								const next: Setting = { planning_center_person_id: person.id, active: toggle.checked, skill_level: (tier.value || null) as Setting['skill_level'] };
 								const { error } = await supabase.from('member_settings').upsert({ ...next, owner_id: session.user.id }, { onConflict: 'owner_id,planning_center_person_id' });
@@ -137,7 +141,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								settings.set(person.id, next); stateCell.textContent = next.active ? 'Eligible' : 'Excluded'; render();
 							};
 							toggle.addEventListener('change', save); tier.addEventListener('change', save);
-							row.append(nameCell, statusCell, tierCell, stateCell); tbody.append(row);
+							row.append(nameCell, instrumentCell, statusCell, tierCell, stateCell); tbody.append(row);
 						}
 					};
 					const personName = (id: string) => {
@@ -194,14 +198,27 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						teamSelect.addEventListener('change', async () => {
 							if (!teamSelect.value) return;
 							message.textContent = 'Loading musicians…'; table.hidden = true;
-							const [loadedPeople, saved, savedPairs] = await Promise.all([
+							const [loadedPeople, positions, assignments, saved, savedPairs] = await Promise.all([
 								fetchAll<PcoPerson>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/people?per_page=100`),
+								fetchAll<PcoPosition>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/team_positions?per_page=100`),
+								fetchAll<PcoPositionAssignment>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/person_team_position_assignments?per_page=100`),
 								supabase.from('member_settings').select('planning_center_person_id,active,skill_level'),
 								supabase.from('required_pair_rules').select('id,person_one_id,person_two_id').order('created_at'),
 							]);
 							if (saved.error) throw saved.error;
 							if (savedPairs.error) throw savedPairs.error;
 							people = loadedPeople; settings = new Map((saved.data ?? []).map((item) => [item.planning_center_person_id, item as Setting]));
+							const positionNames = new Map(positions.map((position) => [position.id, position.attributes.name ?? `Position ${position.id}`]));
+							instrumentsByPerson = new Map();
+							for (const assignment of assignments) {
+								const personId = assignment.relationships?.person?.data?.id;
+								const positionId = assignment.relationships?.team_position?.data?.id;
+								if (!personId || !positionId) continue;
+								const names = instrumentsByPerson.get(personId) ?? [];
+								const positionName = positionNames.get(positionId);
+								if (positionName && !names.includes(positionName)) names.push(positionName);
+								instrumentsByPerson.set(personId, names);
+							}
 							pairRules = (savedPairs.data ?? []) as PairRule[];
 							message.textContent = `${people.length} musicians loaded. New musicians start inactive.`; table.hidden = false; pairingPanel.hidden = false; configurePairSelectors(); renderPairs(); render();
 						});

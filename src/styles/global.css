@@ -6,7 +6,7 @@ button, input { font: inherit; }
 .brand { color: inherit; font-weight: 800; text-decoration: none; letter-spacing: -.03em; }
 .brand span { color: #b55f37; font-weight: 500; }
 .status { margin: 0; font-size: .85rem; color: #567069; }
-.site-header nav { margin-left: auto; padding: 0 1.5rem; }
+.site-header nav { display: flex; gap: 1.25rem; margin-left: auto; padding: 0 1.5rem; }
 .site-header nav a { color: #39554d; font-size: .9rem; font-weight: 700; text-decoration: none; }
 .site-header nav a[aria-current="page"] { color: #b55f37; }
 main { max-width: 1120px; margin: 0 auto; padding: 4rem 2rem 6rem; }
@@ -61,6 +61,8 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .pair-list li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem 0; border-bottom: 1px solid #e7e1d5; }
 .pair-list .empty-pair { color: #667871; }
 .text-button { padding: .35rem .55rem; color: #9a442b; background: transparent; }
+.bands-toolbar { grid-template-columns: 1fr 1fr; }
+.count-input { width: 7rem; min-width: 0; padding: .55rem; border: 1px solid #bac5c0; border-radius: 7px; background: white; }
 @media (max-width: 760px) {
 	.site-header, main { padding-left: 1.1rem; padding-right: 1.1rem; }
 	main { padding-top: 2rem; }
@@ -68,6 +70,8 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 	.features { grid-template-columns: 1fr 1fr; }
 	.form-row { flex-direction: column; }
 	.toolbar { grid-template-columns: 1fr; }
+	.site-header { flex-wrap: wrap; gap: .75rem; }
+	.site-header nav { order: 3; width: 100%; margin-left: 0; padding: 0; }
 	.page-heading { align-items: start; }
 	.pair-form { grid-template-columns: 1fr; }
 	.pair-form > span { padding: 0; }

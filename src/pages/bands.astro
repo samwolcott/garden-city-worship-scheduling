@@ -1,0 +1,139 @@
+---
+import '../styles/global.css';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<link rel="icon" type="image/svg+xml" href={`${base}/favicon.svg`} />
+		<title>Weekly Bands | Garden City Worship Scheduler</title>
+	</head>
+	<body>
+		<header class="site-header">
+			<a class="brand" href={`${base}/`}>Garden City <span>Worship Scheduler</span></a>
+			<nav><a href={`${base}/people/`}>People</a><a aria-current="page" href={`${base}/bands/`}>Weekly bands</a></nav>
+		</header>
+		<main class="people-page">
+			<section class="page-heading">
+				<div><p class="eyebrow">Band setup</p><h1>Weekly bands</h1><p class="lede">Choose the instruments and number of players needed for each week.</p></div>
+				<div class="summary"><strong id="required-count">0</strong><span>players</span></div>
+			</section>
+
+			<section class="toolbar bands-toolbar" aria-label="Weekly band controls">
+				<label>Service date<input id="service-date" type="date" /></label>
+				<label>Planning Center team<select id="team-select" disabled><option>Loading teams…</option></select></label>
+			</section>
+
+			<p id="bands-message" class="notice" role="status">Connecting to Planning Center…</p>
+			<div id="requirements-wrap" class="table-wrap" hidden>
+				<table>
+					<thead><tr><th>Instrument / position</th><th>Players needed</th><th>Save state</th></tr></thead>
+					<tbody id="requirements-list"></tbody>
+				</table>
+			</div>
+		</main>
+
+		<script>
+			import { getSupabase, supabaseConfigured } from '../lib/supabase';
+			type PcoTeam = { id: string; attributes: { name?: string } };
+			type PcoPosition = { id: string; attributes: { name?: string; sequence?: number } };
+			type Requirement = { id?: string; planning_center_team_position_id: string; position_name: string; required_count: number };
+
+			const message = document.querySelector<HTMLParagraphElement>('#bands-message')!;
+			const dateInput = document.querySelector<HTMLInputElement>('#service-date')!;
+			const teamSelect = document.querySelector<HTMLSelectElement>('#team-select')!;
+			const wrap = document.querySelector<HTMLDivElement>('#requirements-wrap')!;
+			const tbody = document.querySelector<HTMLTableSectionElement>('#requirements-list')!;
+			const requiredCount = document.querySelector<HTMLElement>('#required-count')!;
+			dateInput.value = new Date().toLocaleDateString('en-CA');
+
+			if (!supabaseConfigured) {
+				message.textContent = 'Supabase is not configured yet.';
+			} else {
+				const supabase = getSupabase();
+				const { data: { session } } = await supabase.auth.getSession();
+				if (!session) {
+					message.textContent = 'Sign in from the home page to configure weekly bands.';
+				} else {
+					const callPco = async (path: string) => {
+						const { data, error } = await supabase.functions.invoke('planning-center', { body: { method: 'GET', path } });
+						if (!error) return data;
+						const response = 'context' in error && error.context instanceof Response ? error.context : undefined;
+						let detail = error.message;
+						if (response) {
+							try { const payload = await response.clone().json(); detail = payload.error ?? payload.message ?? payload.errors?.[0]?.detail ?? detail; }
+							catch { const body = await response.clone().text(); if (body) detail = body; }
+							throw new Error(`Planning Center request failed (${response.status}): ${detail}`);
+						}
+						throw new Error(`Could not reach the scheduling service: ${detail}`);
+					};
+					const fetchAll = async <T,>(path: string): Promise<T[]> => {
+						const records: T[] = [];
+						for (let page = 0; path && page < 20; page++) {
+							const result = await callPco(path);
+							records.push(...(result.data ?? []));
+							path = result.links?.next ? new URL(result.links.next).pathname + new URL(result.links.next).search : '';
+						}
+						return records;
+					};
+
+					let positions: PcoPosition[] = [];
+					let requirements = new Map<string, Requirement>();
+					const updateCount = () => { requiredCount.textContent = String([...requirements.values()].reduce((sum, item) => sum + item.required_count, 0)); };
+					const render = () => {
+						tbody.replaceChildren();
+						for (const position of positions) {
+							const name = position.attributes.name ?? `Position ${position.id}`;
+							const saved = requirements.get(position.id);
+							const row = document.createElement('tr');
+							const nameCell = document.createElement('td'); nameCell.textContent = name;
+							const countCell = document.createElement('td');
+							const count = document.createElement('input'); count.type = 'number'; count.min = '0'; count.max = '20'; count.step = '1'; count.value = String(saved?.required_count ?? 0); count.className = 'count-input'; count.setAttribute('aria-label', `${name} players needed`); countCell.append(count);
+							const stateCell = document.createElement('td'); stateCell.className = 'save-state'; stateCell.textContent = saved ? 'Saved' : 'Not needed';
+							count.addEventListener('change', async () => {
+								const value = Math.max(0, Math.min(20, Math.round(Number(count.value) || 0))); count.value = String(value); count.disabled = true; stateCell.textContent = 'Saving…';
+								if (value === 0) {
+									const { error } = await supabase.from('weekly_instrument_requirements').delete().eq('owner_id', session.user.id).eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value).eq('planning_center_team_position_id', position.id);
+									if (error) stateCell.textContent = error.message; else { requirements.delete(position.id); stateCell.textContent = 'Not needed'; }
+								} else {
+									const next = { owner_id: session.user.id, service_date: dateInput.value, planning_center_team_id: teamSelect.value, planning_center_team_position_id: position.id, position_name: name, required_count: value, updated_at: new Date().toISOString() };
+									const { data, error } = await supabase.from('weekly_instrument_requirements').upsert(next, { onConflict: 'owner_id,service_date,planning_center_team_id,planning_center_team_position_id' }).select('id,planning_center_team_position_id,position_name,required_count').single();
+									if (error) stateCell.textContent = error.message; else { requirements.set(position.id, data as Requirement); stateCell.textContent = 'Saved'; }
+								}
+								count.disabled = false; updateCount();
+							});
+							row.append(nameCell, countCell, stateCell); tbody.append(row);
+						}
+						updateCount(); wrap.hidden = false;
+					};
+					const loadWeek = async () => {
+						if (!teamSelect.value || !dateInput.value) { wrap.hidden = true; message.textContent = 'Choose a service date and Planning Center team.'; return; }
+						wrap.hidden = true; message.textContent = 'Loading weekly band…';
+						try {
+							const [loadedPositions, saved] = await Promise.all([
+								fetchAll<PcoPosition>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/team_positions?per_page=100`),
+								supabase.from('weekly_instrument_requirements').select('id,planning_center_team_position_id,position_name,required_count').eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value),
+							]);
+							if (saved.error) throw saved.error;
+							positions = loadedPositions.sort((a, b) => (a.attributes.sequence ?? 0) - (b.attributes.sequence ?? 0));
+							requirements = new Map((saved.data ?? []).map((item) => [item.planning_center_team_position_id, item as Requirement]));
+							message.textContent = positions.length ? 'Set a count above zero for each instrument this band needs.' : 'This Planning Center team has no positions.';
+							render();
+						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not load the weekly band.'; }
+					};
+
+					try {
+						const teams = await fetchAll<PcoTeam>('/services/v2/teams?per_page=100');
+						teamSelect.replaceChildren(new Option('Choose a team', ''));
+						for (const team of teams) teamSelect.add(new Option(team.attributes.name ?? `Team ${team.id}`, team.id));
+						teamSelect.disabled = !teams.length; message.textContent = teams.length ? 'Choose a date and Planning Center team.' : 'No Planning Center teams are available.';
+						teamSelect.addEventListener('change', loadWeek); dateInput.addEventListener('change', loadWeek);
+					} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not load Planning Center.'; }
+				}
+			}
+		</script>
+	</body>
+</html>
