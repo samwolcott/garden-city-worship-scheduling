@@ -1,0 +1,9 @@
+project_id = "garden-city-worship-scheduling"
+
+[auth]
+site_url = "https://samwolcott.github.io/garden-city-worship-scheduling/"
+additional_redirect_urls = [
+  "http://localhost:4321",
+  "http://127.0.0.1:4321",
+  "https://samwolcott.github.io/garden-city-worship-scheduling/",
+]
