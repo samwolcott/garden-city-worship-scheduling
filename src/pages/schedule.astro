@@ -41,6 +41,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							<li>People with fewer assignments in this suggested range are favored.</li>
 							<li>Planning Center cadence preferences are respected: monthly aims for about 3 weeks between dates; every-other-week aims for about 12 days.</li>
 							<li>The scheduler favors the tier used least in that week to spread A, B, and C musicians equitably.</li>
+							<li>A musician marked “Every Sunday” is placed in Worship Leader first whenever they are not blocked out.</li>
 							<li>A musician assigned to Worship Leader and a secondary instrument can fill both positions that Sunday, while counting as one person in the rotation.</li>
 							<li>Weekly instrument minimums are filled from the default lineup plus any Sunday overrides.</li>
 						</ul>
@@ -67,7 +68,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			type Resource = { id: string; attributes: Record<string, any>; relationships?: Record<string, { data?: { id?: string } }> };
 			type Requirement = { service_date: string; planning_center_team_id: string; planning_center_team_position_id: string; position_name: string; required_count: number };
 			type DefaultRequirement = Omit<Requirement, 'service_date'>;
-			type Setting = { planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null };
+			type Setting = { planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null; schedule_every_sunday: boolean };
 			type Pair = { person_one_id: string; person_two_id: string };
 			type DraftRow = { id: string; planning_center_plan_id: string; planning_center_person_id: string; planning_center_team_id: string; position_name: string; person_name: string; planning_center_plan_person_id: string | null; published_at: string | null };
 			type ExistingPlanAssignment = { personId: string; personName: string; positionName: string; status: string; fillsRequirement: boolean };
@@ -160,7 +161,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const [requirementsResult, defaultsResult, settingsResult, pairsResult, serviceTypes] = await Promise.all([
 								supabase.from('weekly_instrument_requirements').select('service_date,planning_center_team_id,planning_center_team_position_id,position_name,required_count').gte('service_date', startsOn.value).lte('service_date', endsOn.value).order('service_date'),
 								supabase.from('default_instrument_requirements').select('planning_center_team_id,planning_center_team_position_id,position_name,required_count'),
-								supabase.from('member_settings').select('planning_center_person_id,active,skill_level'),
+								supabase.from('member_settings').select('planning_center_person_id,active,skill_level,schedule_every_sunday'),
 								supabase.from('required_pair_rules').select('person_one_id,person_two_id'),
 								fetchAll<Resource>('/services/v2/service_types?per_page=100'),
 							]);
@@ -220,7 +221,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								const eligiblePeople = people.filter((person) => settings.get(person.id)?.active && settings.get(person.id)?.skill_level);
 								const availability = await Promise.all(eligiblePeople.map(async (person) => {
 									const [blocks, preferences] = await Promise.all([fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts?filter=future&per_page=100`), fetchAll<Resource>(`/services/v2/people/${person.id}/scheduling_preferences?per_page=100`)]);
-									const setting = settings.get(person.id)!; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], blockedDates: blockedDates(blocks, dates), preference: preferences[0]?.attributes.preference } as Candidate;
+									const setting = settings.get(person.id)!; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], blockedDates: blockedDates(blocks, dates), preference: preferences[0]?.attributes.preference, scheduleEverySunday: setting.schedule_every_sunday } as Candidate;
 								}));
 								const existingForScheduler = new Map([...existingByDate].map(([date, members]) => [date, members.map((member) => ({ personId: member.personId, tier: settings.get(member.personId)?.skill_level ?? null }))]));
 								for (const week of suggestWeeks(dates, slotsByDate, availability, pairs, existingForScheduler)) { const plan = plansByDate.get(week.date); renderedWeeks.push({ ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url, existing: existingByDate.get(week.date) ?? [] }); }

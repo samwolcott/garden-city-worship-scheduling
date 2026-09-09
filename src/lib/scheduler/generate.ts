@@ -8,6 +8,7 @@ export interface Candidate {
 	positionIds: string[];
 	blockedDates: string[];
 	preference?: string;
+	scheduleEverySunday?: boolean;
 }
 
 export interface Slot { positionId: string; positionName: string; }
@@ -50,7 +51,8 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 				if (group.some((member) => !member || member.blockedDates.includes(date) || scheduled.has(member.id))) continue;
 				const placements: { person: Candidate; slotIndex: number }[] = [];
 				for (const member of group as Candidate[]) {
-					const index = open.findIndex((slot, i) => !placements.some((placement) => placement.slotIndex === i) && member.positionIds.includes(slot.positionId));
+					const weeklyLeaderIndex = member.scheduleEverySunday ? open.findIndex((slot, i) => !placements.some((placement) => placement.slotIndex === i) && member.positionIds.includes(slot.positionId) && isWorshipLeader(slot.positionName)) : -1;
+					const index = weeklyLeaderIndex >= 0 ? weeklyLeaderIndex : open.findIndex((slot, i) => !placements.some((placement) => placement.slotIndex === i) && member.positionIds.includes(slot.positionId));
 					if (index < 0) { placements.length = 0; break; }
 					placements.push({ person: member, slotIndex: index });
 					const firstSlot = open[index];
@@ -62,7 +64,8 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 					const prior = history.get(member.id) ?? [];
 					const last = prior.at(-1);
 					const gapDays = last ? (Date.parse(date) - Date.parse(last)) / 86400000 : Infinity;
-					return total + prior.length * 100 + (gapDays < 7 ? 1000 : 0) + (gapDays < preferenceGap(member.preference) ? 500 : 0) + (tierCounts.get(member.skill_level!) ?? 0) * 12;
+					const fillsWorshipLeader = placements.some((placement) => placement.person.id === member.id && isWorshipLeader(open[placement.slotIndex].positionName));
+					return total + prior.length * 100 + (gapDays < 7 ? 1000 : 0) + (gapDays < preferenceGap(member.preference) ? 500 : 0) + (tierCounts.get(member.skill_level!) ?? 0) * 12 - (member.scheduleEverySunday && fillsWorshipLeader ? 100000 : 0);
 				}, 0);
 				if (!best || score < best.score) best = { people: group as Candidate[], placements, score };
 			}

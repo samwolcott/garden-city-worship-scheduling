@@ -64,6 +64,10 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .status-toggle.is-active:hover { background: #356b49; }
 .status-toggle.is-inactive { color: #744b3b; background: #efe4da; border-color: #dfcbbd; }
 .status-toggle.is-inactive:hover { color: #5e392c; background: #e5d3c5; }
+.weekly-toggle { min-width: 102px; padding: .5rem .7rem; color: var(--muted); background: #f0ede7; border: 1px solid var(--line); font-size: .75rem; }
+.weekly-toggle:hover { color: var(--ink); background: #e7e1d7; }
+.weekly-toggle.is-weekly { color: white; background: #b55f37; border-color: #b55f37; }
+.weekly-toggle.is-weekly:hover { background: #964b2b; }
 .instrument-editor { position: relative; min-width: 180px; }
 .instrument-editor summary { color: var(--garden); cursor: pointer; font-weight: 700; list-style-position: outside; }
 .instrument-options { position: absolute; z-index: 10; display: grid; gap: .45rem; width: max-content; min-width: 220px; margin-top: .45rem; padding: .85rem; background: white; border: 1px solid var(--line); box-shadow: 0 12px 28px rgb(26 24 20 / 16%); }
