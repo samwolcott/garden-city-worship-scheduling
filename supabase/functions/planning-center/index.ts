@@ -26,7 +26,8 @@ Deno.serve(async (request) => {
   if (!authorization) return Response.json({ error: 'Sign in required' }, { status: 401, headers });
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: authorization } } });
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user || user.email?.toLowerCase() !== Deno.env.get('ALLOWED_EMAIL')?.toLowerCase()) return Response.json({ error: 'Not authorized' }, { status: 403, headers });
+  const allowedEmails = (Deno.env.get('ALLOWED_EMAILS') ?? Deno.env.get('ALLOWED_EMAIL') ?? '').split(',').map((email) => email.trim().toLowerCase()).filter(Boolean);
+  if (!user?.email || !allowedEmails.includes(user.email.toLowerCase())) return Response.json({ error: 'Not authorized' }, { status: 403, headers });
 
   const input = await request.json() as { method?: string; path?: string; body?: Record<string, unknown> };
   const method = input.method?.toUpperCase() ?? 'GET';

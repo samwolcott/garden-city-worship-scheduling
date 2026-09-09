@@ -56,8 +56,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			type PcoServiceType = { id: string; attributes: { name?: string } };
 			type PcoPosition = { id: string; attributes: { name?: string } };
 			type PcoPositionAssignment = { relationships?: { person?: { data?: { id?: string } }; team_position?: { data?: { id?: string } } } };
-			type Setting = { planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null };
-			type PairRule = { id: string; person_one_id: string; person_two_id: string };
+			type Setting = { owner_id: string; planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null };
+			type PairRule = { id: string; owner_id: string; person_one_id: string; person_two_id: string };
 
 			const message = document.querySelector<HTMLParagraphElement>('#people-message')!;
 			const table = document.querySelector<HTMLDivElement>('.table-wrap')!;
@@ -120,7 +120,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						activeCount.textContent = String([...settings.values()].filter((item) => item.active).length);
 						for (const person of people) {
 							const name = person.attributes.name ?? `${person.attributes.first_name ?? ''} ${person.attributes.last_name ?? ''}`.trim();
-							const saved = settings.get(person.id) ?? { planning_center_person_id: person.id, active: false, skill_level: null };
+							const saved = settings.get(person.id) ?? { owner_id: session.user.id, planning_center_person_id: person.id, active: false, skill_level: null };
 							if (!name.toLowerCase().includes(query) || (!showInactive.checked && !saved.active)) continue;
 							const row = document.createElement('tr');
 							const nameCell = document.createElement('td'); nameCell.textContent = name;
@@ -135,8 +135,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const save = async () => {
 								if (toggle.checked && !tier.value) { toggle.checked = false; stateCell.textContent = 'Choose a band tier before activating'; return; }
 								stateCell.textContent = 'Saving…';
-								const next: Setting = { planning_center_person_id: person.id, active: toggle.checked, skill_level: (tier.value || null) as Setting['skill_level'] };
-								const { error } = await supabase.from('member_settings').upsert({ ...next, owner_id: session.user.id }, { onConflict: 'owner_id,planning_center_person_id' });
+								const next: Setting = { owner_id: saved.owner_id, planning_center_person_id: person.id, active: toggle.checked, skill_level: (tier.value || null) as Setting['skill_level'] };
+								const { error } = await supabase.from('member_settings').upsert(next, { onConflict: 'owner_id,planning_center_person_id' });
 								if (error) { stateCell.textContent = error.message; return; }
 								settings.set(person.id, next); stateCell.textContent = next.active ? 'Eligible' : 'Excluded'; render();
 							};
@@ -174,7 +174,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						if (!pairOne.value || !pairTwo.value || pairOne.value === pairTwo.value) { pairMessage.textContent = 'Choose two different musicians.'; return; }
 						const [person_one_id, person_two_id] = [pairOne.value, pairTwo.value].sort();
 						pairMessage.textContent = 'Saving…';
-						const { data, error } = await supabase.from('required_pair_rules').upsert({ owner_id: session.user.id, person_one_id, person_two_id }, { onConflict: 'owner_id,person_one_id,person_two_id' }).select('id,person_one_id,person_two_id').single();
+						const owner_id = pairRules.find((item) => item.person_one_id === person_one_id && item.person_two_id === person_two_id)?.owner_id ?? session.user.id;
+						const { data, error } = await supabase.from('required_pair_rules').upsert({ owner_id, person_one_id, person_two_id }, { onConflict: 'owner_id,person_one_id,person_two_id' }).select('id,owner_id,person_one_id,person_two_id').single();
 						if (error) { pairMessage.textContent = error.message; return; }
 						pairRules = [...pairRules.filter((item) => item.id !== data.id), data as PairRule]; pairMessage.textContent = 'Pairing rule saved.'; pairForm.reset(); renderPairs();
 					});
@@ -202,8 +203,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								fetchAll<PcoPerson>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/people?per_page=100`),
 								fetchAll<PcoPosition>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/team_positions?per_page=100`),
 								fetchAll<PcoPositionAssignment>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/person_team_position_assignments?per_page=100`),
-								supabase.from('member_settings').select('planning_center_person_id,active,skill_level'),
-								supabase.from('required_pair_rules').select('id,person_one_id,person_two_id').order('created_at'),
+								supabase.from('member_settings').select('owner_id,planning_center_person_id,active,skill_level'),
+								supabase.from('required_pair_rules').select('id,owner_id,person_one_id,person_two_id').order('created_at'),
 							]);
 							if (saved.error) throw saved.error;
 							if (savedPairs.error) throw savedPairs.error;

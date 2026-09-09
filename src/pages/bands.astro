@@ -41,7 +41,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			type PcoTeam = { id: string; attributes: { name?: string }; relationships?: { service_type?: { data?: { id?: string } } } };
 			type PcoPosition = { id: string; attributes: { name?: string; sequence?: number } };
 			type PcoPlan = { id: string; attributes: { sort_date?: string; title?: string; dates?: string } };
-			type Requirement = { id?: string; planning_center_team_position_id: string; position_name: string; required_count: number };
+			type Requirement = { id?: string; owner_id: string; planning_center_team_position_id: string; position_name: string; required_count: number };
 
 			const message = document.querySelector<HTMLParagraphElement>('#bands-message')!;
 			const dateInput = document.querySelector<HTMLSelectElement>('#service-date')!;
@@ -97,10 +97,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							count.addEventListener('change', async () => {
 								const value = Math.max(0, Math.min(20, Math.round(Number(count.value) || 0))); count.value = String(value); count.disabled = true; stateCell.textContent = 'Saving…';
 								if (value === 0) {
-									const { error } = await supabase.from('weekly_instrument_requirements').delete().eq('owner_id', session.user.id).eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value).eq('planning_center_team_position_id', position.id);
+									const { error } = await supabase.from('weekly_instrument_requirements').delete().eq('owner_id', saved?.owner_id ?? session.user.id).eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value).eq('planning_center_team_position_id', position.id);
 									if (error) stateCell.textContent = error.message; else { requirements.delete(position.id); stateCell.textContent = 'Not needed'; }
 								} else {
-									const next = { owner_id: session.user.id, service_date: dateInput.value, planning_center_team_id: teamSelect.value, planning_center_team_position_id: position.id, position_name: name, required_count: value, updated_at: new Date().toISOString() };
+									const next = { owner_id: saved?.owner_id ?? session.user.id, service_date: dateInput.value, planning_center_team_id: teamSelect.value, planning_center_team_position_id: position.id, position_name: name, required_count: value, updated_at: new Date().toISOString() };
 									const { data, error } = await supabase.from('weekly_instrument_requirements').upsert(next, { onConflict: 'owner_id,service_date,planning_center_team_id,planning_center_team_position_id' }).select('id,planning_center_team_position_id,position_name,required_count').single();
 									if (error) stateCell.textContent = error.message; else { requirements.set(position.id, data as Requirement); stateCell.textContent = 'Saved'; }
 								}
@@ -116,7 +116,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						try {
 							const [loadedPositions, saved] = await Promise.all([
 								fetchAll<PcoPosition>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/team_positions?per_page=100`),
-								supabase.from('weekly_instrument_requirements').select('id,planning_center_team_position_id,position_name,required_count').eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value),
+								supabase.from('weekly_instrument_requirements').select('id,owner_id,planning_center_team_position_id,position_name,required_count').eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value),
 							]);
 							if (saved.error) throw saved.error;
 							positions = loadedPositions.sort((a, b) => (a.attributes.sequence ?? 0) - (b.attributes.sequence ?? 0));
