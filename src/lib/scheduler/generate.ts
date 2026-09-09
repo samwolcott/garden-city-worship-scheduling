@@ -14,7 +14,7 @@ export interface Candidate {
 export interface Slot { positionId: string; positionName: string; }
 export interface SuggestedAssignment extends Slot { personId: string; personName: string; tier: SkillLevel; reasons: string[]; }
 export interface WeekSuggestion { date: string; assignments: SuggestedAssignment[]; unfilled: Slot[]; }
-export interface ExistingAssignment { personId: string; tier: SkillLevel | null; }
+export interface ExistingAssignment { personId: string; tier: SkillLevel | null; positionId?: string; }
 
 export const preferenceGap = (preference = '') => {
 	const value = preference.toLowerCase();
@@ -32,10 +32,12 @@ export const preferenceGap = (preference = '') => {
 
 const isWorshipLeader = (positionName: string) => positionName.toLowerCase().includes('worship leader');
 const positionPreference = (person: Candidate, positionId: string) => person.preferencesByPosition?.[positionId] ?? '';
+const previousAssignment = (assignedDates: string[], date: string) => assignedDates.filter((assignedDate) => assignedDate < date).sort().at(-1);
 
 export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, candidates: Candidate[], pairRules: RequiredPairRule[], existingByDate = new Map<string, ExistingAssignment[]>(), initialHistory = new Map<string, string[]>(), monthlyCap = 2): WeekSuggestion[] {
 	const eligible = new Map(candidates.filter((person) => isEligibleForScheduling(person)).map((person) => [person.id, person]));
 	const history = new Map([...initialHistory].map(([personId, assignedDates]) => [personId, [...assignedDates].sort()]));
+	const positionUseCounts = new Map<string, number>();
 	const results: WeekSuggestion[] = [];
 	for (const date of [...dates].sort()) {
 		const open = [...(slotsByDate.get(date) ?? [])];
@@ -45,6 +47,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 		const tierCounts = new Map<SkillLevel, number>([['A', 0], ['B', 0], ['C', 0]]);
 		const countedExisting = new Set<string>();
 		for (const assignment of existing) {
+			if (assignment.positionId) { const key = `${assignment.personId}:${assignment.positionId}`; positionUseCounts.set(key, (positionUseCounts.get(key) ?? 0) + 1); }
 			if (countedExisting.has(assignment.personId)) continue;
 			countedExisting.add(assignment.personId);
 			history.set(assignment.personId, [...(history.get(assignment.personId) ?? []), date]);
@@ -57,6 +60,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 				const groupIds = [...requiredGroupFor(person.id, pairRules)].filter((id) => !scheduled.has(id));
 				const group = groupIds.map((id) => eligible.get(id));
 				if (group.some((member) => !member || member.blockedDates.includes(date) || scheduled.has(member.id))) continue;
+				if ((group as Candidate[]).some((member) => !member.scheduleEverySunday && (history.get(member.id) ?? []).some((assignedDate) => Math.abs(Date.parse(date) - Date.parse(assignedDate)) / 86400000 < 14))) continue;
 				if ((group as Candidate[]).some((member) => !member.scheduleEverySunday && new Set((history.get(member.id) ?? []).filter((assignedDate) => assignedDate.slice(0, 7) === date.slice(0, 7))).size >= monthlyCap)) continue;
 				const placements: { person: Candidate; slotIndex: number }[] = [];
 				for (const member of group as Candidate[]) {
@@ -65,14 +69,14 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 					if (index < 0) { placements.length = 0; break; }
 					placements.push({ person: member, slotIndex: index });
 					const firstSlot = open[index];
-					const secondIndex = open.findIndex((slot, i) => !placements.some((placement) => placement.slotIndex === i) && member.positionIds.includes(slot.positionId) && isWorshipLeader(slot.positionName) !== isWorshipLeader(firstSlot.positionName));
+					const secondIndex = open.map((slot, i) => ({ slot, i })).filter(({ slot, i }) => !placements.some((placement) => placement.slotIndex === i) && member.positionIds.includes(slot.positionId) && isWorshipLeader(slot.positionName) !== isWorshipLeader(firstSlot.positionName)).sort((a, b) => (positionUseCounts.get(`${member.id}:${a.slot.positionId}`) ?? 0) - (positionUseCounts.get(`${member.id}:${b.slot.positionId}`) ?? 0))[0]?.i ?? -1;
 					if (secondIndex >= 0) placements.push({ person: member, slotIndex: secondIndex });
 				}
 				if (!placements.length) continue;
-				if (placements.some(({ person: member, slotIndex }) => { const preference = positionPreference(member, open[slotIndex].positionId); if (preference.toLowerCase() === 'unavailable') return true; const last = (history.get(member.id) ?? []).at(-1); return Boolean(last) && (Date.parse(date) - Date.parse(last!)) / 86400000 < preferenceGap(preference); })) continue;
+				if (placements.some(({ person: member, slotIndex }) => { const preference = positionPreference(member, open[slotIndex].positionId); if (preference.toLowerCase() === 'unavailable') return true; const gap = preferenceGap(preference); return gap > 0 && (history.get(member.id) ?? []).some((assignedDate) => Math.abs(Date.parse(date) - Date.parse(assignedDate)) / 86400000 < gap); })) continue;
 				const score = (group as Candidate[]).reduce((total, member) => {
 					const prior = history.get(member.id) ?? [];
-					const last = prior.at(-1);
+					const last = previousAssignment(prior, date);
 					const gapDays = last ? (Date.parse(date) - Date.parse(last)) / 86400000 : Infinity;
 					const fillsWorshipLeader = placements.some((placement) => placement.person.id === member.id && isWorshipLeader(open[placement.slotIndex].positionName));
 					return total + prior.length * 100 + (gapDays < 7 ? 1000 : 0) + (tierCounts.get(member.skill_level!) ?? 0) * 12 - (member.scheduleEverySunday && fillsWorshipLeader ? 100000 : 0);
@@ -82,8 +86,9 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 			if (!best) break;
 			for (const { person, slotIndex } of best.placements) {
 				const slot = open[slotIndex];
+				const positionKey = `${person.id}:${slot.positionId}`;
 				const prior = history.get(person.id) ?? [];
-				const last = prior.at(-1);
+				const last = previousAssignment(prior, date);
 				const gapDays = last ? Math.round((Date.parse(date) - Date.parse(last)) / 86400000) : undefined;
 				const reasons = [`Assigned to ${slot.positionName} in Planning Center`, 'No Planning Center blockout on this date'];
 				if (person.scheduleEverySunday && isWorshipLeader(slot.positionName)) reasons.push('Marked Every Sunday for Worship Leader');
@@ -94,10 +99,11 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 				if (!person.scheduleEverySunday) reasons.push(`${new Set(prior.filter((assignedDate) => assignedDate.slice(0, 7) === date.slice(0, 7))).size} of ${monthlyCap} allowed Sundays already used that month`);
 				const lowestTierCount = Math.min(...tierCounts.values());
 				if ((tierCounts.get(person.skill_level!) ?? 0) === lowestTierCount) reasons.push(`Tier ${person.skill_level} supported the week’s tier balance`);
-				if (prior.length === 0) reasons.push('Had no earlier assignment in this suggested range'); else reasons.push(`${prior.length} earlier assignment${prior.length === 1 ? '' : 's'} in this suggested range`);
+				if (prior.length === 0) reasons.push('Had no other assignment in the scheduling history'); else reasons.push(`${new Set(prior).size} other assignment date${new Set(prior).size === 1 ? '' : 's'} considered for rotation fairness`);
 				if (best.people.length > 1) reasons.push('Placed with a required scheduling partner');
-				if (best.placements.filter((placement) => placement.person.id === person.id).length > 1) reasons.push('Also covers Worship Leader or a secondary instrument');
+				if (best.placements.filter((placement) => placement.person.id === person.id).length > 1) reasons.push('Also covers Worship Leader or a secondary instrument; the least-used eligible secondary role was favored');
 				assignments.push({ ...slot, personId: person.id, personName: person.name, tier: person.skill_level!, reasons });
+				positionUseCounts.set(positionKey, (positionUseCounts.get(positionKey) ?? 0) + 1);
 			}
 			for (const person of best.people) {
 				scheduled.add(person.id);
