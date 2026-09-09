@@ -23,8 +23,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			</section>
 
 			<section class="toolbar bands-toolbar" aria-label="Weekly band controls">
-				<label>Service date<input id="service-date" type="date" /></label>
 				<label>Planning Center team<select id="team-select" disabled><option>Loading teams…</option></select></label>
+				<label>Service date<select id="service-date" disabled><option>Choose a team first</option></select></label>
 			</section>
 
 			<p id="bands-message" class="notice" role="status">Connecting to Planning Center…</p>
@@ -38,17 +38,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 		<script>
 			import { getSupabase, supabaseConfigured } from '../lib/supabase';
-			type PcoTeam = { id: string; attributes: { name?: string } };
+			type PcoTeam = { id: string; attributes: { name?: string }; relationships?: { service_type?: { data?: { id?: string } } } };
 			type PcoPosition = { id: string; attributes: { name?: string; sequence?: number } };
+			type PcoPlan = { id: string; attributes: { sort_date?: string; title?: string; dates?: string } };
 			type Requirement = { id?: string; planning_center_team_position_id: string; position_name: string; required_count: number };
 
 			const message = document.querySelector<HTMLParagraphElement>('#bands-message')!;
-			const dateInput = document.querySelector<HTMLInputElement>('#service-date')!;
+			const dateInput = document.querySelector<HTMLSelectElement>('#service-date')!;
 			const teamSelect = document.querySelector<HTMLSelectElement>('#team-select')!;
 			const wrap = document.querySelector<HTMLDivElement>('#requirements-wrap')!;
 			const tbody = document.querySelector<HTMLTableSectionElement>('#requirements-list')!;
 			const requiredCount = document.querySelector<HTMLElement>('#required-count')!;
-			dateInput.value = new Date().toLocaleDateString('en-CA');
 
 			if (!supabaseConfigured) {
 				message.textContent = 'Supabase is not configured yet.';
@@ -81,6 +81,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					};
 
 					let positions: PcoPosition[] = [];
+					let teamsById = new Map<string, PcoTeam>();
 					let requirements = new Map<string, Requirement>();
 					const updateCount = () => { requiredCount.textContent = String([...requirements.values()].reduce((sum, item) => sum + item.required_count, 0)); };
 					const render = () => {
@@ -124,13 +125,34 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							render();
 						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not load the weekly band.'; }
 					};
+					const loadPlanDates = async () => {
+						wrap.hidden = true; requiredCount.textContent = '0'; dateInput.disabled = true; dateInput.replaceChildren(new Option('Loading Sunday plans…', ''));
+						if (!teamSelect.value) { dateInput.replaceChildren(new Option('Choose a team first', '')); message.textContent = 'Choose a Planning Center team.'; return; }
+						try {
+							const serviceTypeId = teamsById.get(teamSelect.value)?.relationships?.service_type?.data?.id;
+							if (!serviceTypeId) throw new Error('Planning Center did not provide a service type for this team.');
+							const plans = await fetchAll<PcoPlan>(`/services/v2/service_types/${encodeURIComponent(serviceTypeId)}/plans?filter=future&order=sort_date&per_page=100`);
+							const sundays = [...new Map(plans.filter((plan) => {
+								const date = plan.attributes.sort_date?.slice(0, 10); return date && new Date(`${date}T12:00:00`).getDay() === 0;
+							}).map((plan) => [plan.attributes.sort_date!.slice(0, 10), plan])).values()];
+							dateInput.replaceChildren(new Option(sundays.length ? 'Choose a Sunday plan' : 'No upcoming Sunday plans', ''));
+							for (const plan of sundays) {
+								const date = plan.attributes.sort_date!.slice(0, 10);
+								const label = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+								dateInput.add(new Option(plan.attributes.title ? `${label} — ${plan.attributes.title}` : label, date));
+							}
+							dateInput.disabled = !sundays.length;
+							message.textContent = sundays.length ? `${sundays.length} upcoming Sunday plan${sundays.length === 1 ? '' : 's'} found.` : 'This team’s service type has no upcoming Sunday plans in Planning Center.';
+						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not load Planning Center plans.'; }
+					};
 
 					try {
 						const teams = await fetchAll<PcoTeam>('/services/v2/teams?per_page=100');
+						teamsById = new Map(teams.map((team) => [team.id, team]));
 						teamSelect.replaceChildren(new Option('Choose a team', ''));
 						for (const team of teams) teamSelect.add(new Option(team.attributes.name ?? `Team ${team.id}`, team.id));
-						teamSelect.disabled = !teams.length; message.textContent = teams.length ? 'Choose a date and Planning Center team.' : 'No Planning Center teams are available.';
-						teamSelect.addEventListener('change', loadWeek); dateInput.addEventListener('change', loadWeek);
+						teamSelect.disabled = !teams.length; message.textContent = teams.length ? 'Choose a Planning Center team to load its Sunday plans.' : 'No Planning Center teams are available.';
+						teamSelect.addEventListener('change', loadPlanDates); dateInput.addEventListener('change', loadWeek);
 					} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not load Planning Center.'; }
 				}
 			}
