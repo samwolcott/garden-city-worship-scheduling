@@ -38,6 +38,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						<h2>Rotation &amp; band mix</h2>
 						<ul>
 							<li>Existing Planning Center assignments fill their matching positions first and count toward the week’s balance.</li>
+							<li>Prior confirmed and unconfirmed Planning Center assignments—including placeholders—are included in the lookback.</li>
 							<li>People with fewer assignments in this suggested range are favored.</li>
 							<li>Planning Center cadence preferences are minimum spacing rules: every other week is 14 days, monthly is 28 days, and “every 6 weeks” is 42 days.</li>
 							<li>The scheduler favors the tier used least in that week to spread A, B, and C musicians equitably.</li>
@@ -199,7 +200,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								const teamRequirements = requirements.filter((item) => item.planning_center_team_id === teamId);
 								const teamDefaults = defaultRequirements.filter((item) => item.planning_center_team_id === teamId);
 								const serviceTypeId = teamServiceTypes.get(teamId); if (!serviceTypeId) throw new Error(`Could not identify the Planning Center service type for ${teamNames.get(teamId)}.`);
-								const plans = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans?filter=future&order=sort_date&per_page=100`);
+								const [futurePlans, pastPayload] = await Promise.all([fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans?filter=future&order=sort_date&per_page=100`), callPco(`/services/v2/service_types/${serviceTypeId}/plans?filter=past&order=-sort_date&per_page=100`)]);
+								const plans = [...new Map([...(pastPayload.data ?? []), ...futurePlans].map((plan: Resource) => [plan.id, plan])).values()];
 								const plansByDate = new Map(plans.map((plan) => [String(plan.attributes.sort_date ?? '').slice(0, 10), plan]));
 								const planDates = [...plansByDate.keys()].filter((date) => date >= startsOn.value && date <= endsOn.value && new Date(`${date}T12:00:00`).getDay() === 0);
 								const candidateDates = new Set(teamDefaults.length ? planDates : []); for (const item of teamRequirements) candidateDates.add(item.service_date);
@@ -242,9 +244,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 									const setting = settings.get(person.id)!; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], blockedDates: blockedDates(blocks, dates), preference: ownPreference?.attributes.preference, scheduleEverySunday: setting.schedule_every_sunday } as Candidate;
 								}));
 								candidatesByTeam.set(teamId, availability);
-								const maxPreferenceGap = Math.max(0, ...availability.map((candidate) => preferenceGap(candidate.preference)));
-								const firstDate = dates[0]; const lookbackStart = firstDate ? new Date(Date.parse(`${firstDate}T12:00:00`) - maxPreferenceGap * 86400000).toISOString().slice(0, 10) : '';
-								const priorPlans = plans.filter((plan) => { const date = String(plan.attributes.sort_date ?? '').slice(0, 10); return maxPreferenceGap > 0 && date >= lookbackStart && date < firstDate; });
+								const maxPreferenceGap = Math.max(0, ...availability.map((candidate) => preferenceGap(candidate.preference))); const lookbackDays = Math.max(84, maxPreferenceGap);
+								const firstDate = dates[0]; const lookbackStart = firstDate ? new Date(Date.parse(`${firstDate}T12:00:00`) - lookbackDays * 86400000).toISOString().slice(0, 10) : '';
+								const priorPlans = plans.filter((plan) => { const date = String(plan.attributes.sort_date ?? '').slice(0, 10); return date >= lookbackStart && date < firstDate; });
 								const priorHistory = new Map<string, string[]>();
 								await Promise.all(priorPlans.map(async (plan) => { const date = String(plan.attributes.sort_date ?? '').slice(0, 10); const members = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans/${plan.id}/team_members?where[team_id]=${encodeURIComponent(teamId)}&per_page=100`); const seen = new Set<string>(); for (const member of members.filter((item) => !['d', 'declined'].includes(String(item.attributes.status ?? '').toLowerCase()))) { const personId = member.relationships?.person?.data?.id; if (!personId || seen.has(personId)) continue; seen.add(personId); priorHistory.set(personId, [...(priorHistory.get(personId) ?? []), date]); } }));
 								priorHistoryByTeam.set(teamId, priorHistory);

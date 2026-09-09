@@ -83,8 +83,10 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 				const gapDays = last ? Math.round((Date.parse(date) - Date.parse(last)) / 86400000) : undefined;
 				const reasons = [`Assigned to ${slot.positionName} in Planning Center`, 'No Planning Center blockout on this date'];
 				if (person.scheduleEverySunday && isWorshipLeader(slot.positionName)) reasons.push('Marked Every Sunday for Worship Leader');
-				if (person.preference) reasons.push(`Planning Center preference: ${person.preference}${gapDays ? `; ${gapDays} days since the prior assignment` : ''}`);
-				else reasons.push('No Planning Center cadence preference set');
+				const preferredGap = preferenceGap(person.preference);
+				if (person.preference) reasons.push(`Planning Center serving preference: ${person.preference}${preferredGap ? ` (${preferredGap}-day minimum)` : ''}`);
+				else reasons.push('No Planning Center serving-frequency preference set');
+				if (last) reasons.push(`Previous assignment considered: ${last}${gapDays !== undefined ? ` (${gapDays} days earlier)` : ''}`); else reasons.push('No earlier assignment found in the lookback period');
 				const lowestTierCount = Math.min(...tierCounts.values());
 				if ((tierCounts.get(person.skill_level!) ?? 0) === lowestTierCount) reasons.push(`Tier ${person.skill_level} supported the week’s tier balance`);
 				if (prior.length === 0) reasons.push('Had no earlier assignment in this suggested range'); else reasons.push(`${prior.length} earlier assignment${prior.length === 1 ? '' : 's'} in this suggested range`);
