@@ -38,6 +38,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			import { suggestWeeks, type Candidate, type Slot, type WeekSuggestion } from '../lib/scheduler/generate';
 			type Resource = { id: string; attributes: Record<string, any>; relationships?: Record<string, { data?: { id?: string } }> };
 			type Requirement = { service_date: string; planning_center_team_id: string; planning_center_team_position_id: string; position_name: string; required_count: number };
+			type DefaultRequirement = Omit<Requirement, 'service_date'>;
 			type Setting = { planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null };
 			type Pair = { person_one_id: string; person_two_id: string };
 			type DraftRow = { id: string; planning_center_plan_id: string; planning_center_person_id: string; planning_center_team_id: string; position_name: string; person_name: string; planning_center_plan_person_id: string | null; published_at: string | null };
@@ -126,27 +127,37 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						if (!startsOn.value || !endsOn.value || endsOn.value < startsOn.value) { message.textContent = 'Choose a valid date range.'; return; }
 						generateButton.disabled = true; publishBar.hidden = true; results.hidden = true; message.classList.remove('error-notice'); message.textContent = 'Reading requirements, availability, and Planning Center plans…';
 						try {
-							const [requirementsResult, settingsResult, pairsResult, serviceTypes] = await Promise.all([
+							const [requirementsResult, defaultsResult, settingsResult, pairsResult, serviceTypes] = await Promise.all([
 								supabase.from('weekly_instrument_requirements').select('service_date,planning_center_team_id,planning_center_team_position_id,position_name,required_count').gte('service_date', startsOn.value).lte('service_date', endsOn.value).order('service_date'),
+								supabase.from('default_instrument_requirements').select('planning_center_team_id,planning_center_team_position_id,position_name,required_count'),
 								supabase.from('member_settings').select('planning_center_person_id,active,skill_level'),
 								supabase.from('required_pair_rules').select('person_one_id,person_two_id'),
 								fetchAll<Resource>('/services/v2/service_types?per_page=100'),
 							]);
-							if (requirementsResult.error) throw requirementsResult.error; if (settingsResult.error) throw settingsResult.error; if (pairsResult.error) throw pairsResult.error;
+							if (requirementsResult.error) throw requirementsResult.error; if (defaultsResult.error) throw defaultsResult.error; if (settingsResult.error) throw settingsResult.error; if (pairsResult.error) throw pairsResult.error;
 							const activeServiceTypes = serviceTypes.filter((serviceType) => !serviceType.attributes.archived_at && !serviceType.attributes.deleted_at);
 							const teamGroups = await Promise.all(activeServiceTypes.map(async (serviceType) => (await fetchAll<Resource>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)).map((team) => ({ ...team, relationships: { ...team.relationships, service_type: { data: { id: serviceType.id } } } }))));
 							const activeTeams = [...new Map(teamGroups.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at && !hiddenTeamIds.has(team.id)).map((team) => [team.id, team])).values()];
 							const activeTeamIds = new Set(activeTeams.map((team) => team.id));
 							const requirements = ((requirementsResult.data ?? []) as Requirement[]).filter((item) => activeTeamIds.has(item.planning_center_team_id));
-							if (!requirements.length) throw new Error('No weekly instrument requirements are configured in this range. Add them on Weekly bands first.');
+							const defaultRequirements = ((defaultsResult.data ?? []) as DefaultRequirement[]).filter((item) => activeTeamIds.has(item.planning_center_team_id));
+							if (!requirements.length && !defaultRequirements.length) throw new Error('No instrument requirements are configured. Add the default lineup on Weekly bands first.');
 							const settings = new Map(((settingsResult.data ?? []) as Setting[]).map((item) => [item.planning_center_person_id, item]));
 							const pairs = (pairsResult.data ?? []) as Pair[];
 							const teamNames = new Map(activeTeams.map((team) => [team.id, String(team.attributes.name ?? `Team ${team.id}`)]));
 							teamServiceTypes = new Map(activeTeams.map((team): [string, string] => [team.id, team.relationships?.service_type?.data?.id ?? '']).filter((entry) => entry[1]));
-							const teamIds = [...new Set(requirements.map((item) => item.planning_center_team_id))]; renderedWeeks = [];
+							const teamIds = [...new Set([...requirements, ...defaultRequirements].map((item) => item.planning_center_team_id))]; renderedWeeks = [];
 							for (const teamId of teamIds) {
 								const teamRequirements = requirements.filter((item) => item.planning_center_team_id === teamId);
-								const dates = [...new Set(teamRequirements.map((item) => item.service_date))];
+								const teamDefaults = defaultRequirements.filter((item) => item.planning_center_team_id === teamId);
+								const serviceTypeId = teamServiceTypes.get(teamId); if (!serviceTypeId) throw new Error(`Could not identify the Planning Center service type for ${teamNames.get(teamId)}.`);
+								const plans = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans?filter=future&order=sort_date&per_page=100`);
+								const plansByDate = new Map(plans.map((plan) => [String(plan.attributes.sort_date ?? '').slice(0, 10), plan]));
+								const planDates = [...plansByDate.keys()].filter((date) => date >= startsOn.value && date <= endsOn.value && new Date(`${date}T12:00:00`).getDay() === 0);
+								const candidateDates = new Set(teamDefaults.length ? planDates : []); for (const item of teamRequirements) candidateDates.add(item.service_date);
+								const slotsByDate = new Map<string, Slot[]>();
+								for (const date of candidateDates) { const counts = new Map(teamDefaults.map((item) => [item.planning_center_team_position_id, { name: item.position_name, count: item.required_count }])); for (const item of teamRequirements.filter((entry) => entry.service_date === date)) counts.set(item.planning_center_team_position_id, { name: item.position_name, count: item.required_count }); const slots: Slot[] = []; for (const [positionId, value] of counts) for (let i = 0; i < value.count; i++) slots.push({ positionId, positionName: value.name }); if (slots.length) slotsByDate.set(date, slots); }
+								const dates = [...slotsByDate.keys()].sort();
 								const [people, assignments] = await Promise.all([
 									fetchAll<Resource>(`/services/v2/teams/${encodeURIComponent(teamId)}/people?per_page=100`),
 									fetchAll<Resource>(`/services/v2/teams/${encodeURIComponent(teamId)}/person_team_position_assignments?per_page=100`),
@@ -158,11 +169,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 									const [blocks, preferences] = await Promise.all([fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts?filter=future&per_page=100`), fetchAll<Resource>(`/services/v2/people/${person.id}/scheduling_preferences?per_page=100`)]);
 									const setting = settings.get(person.id)!; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], blockedDates: blockedDates(blocks, dates), preference: preferences[0]?.attributes.preference } as Candidate;
 								}));
-								const slotsByDate = new Map<string, Slot[]>();
-								for (const requirement of teamRequirements) { const slots = slotsByDate.get(requirement.service_date) ?? []; for (let i = 0; i < requirement.required_count; i++) slots.push({ positionId: requirement.planning_center_team_position_id, positionName: requirement.position_name }); slotsByDate.set(requirement.service_date, slots); }
-								const serviceTypeId = teamServiceTypes.get(teamId); if (!serviceTypeId) throw new Error(`Could not identify the Planning Center service type for ${teamNames.get(teamId)}.`);
-								const plans = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans?filter=future&order=sort_date&per_page=100`);
-								const plansByDate = new Map(plans.map((plan) => [String(plan.attributes.sort_date ?? '').slice(0, 10), plan]));
 								for (const week of suggestWeeks(dates, slotsByDate, availability, pairs)) { const plan = plansByDate.get(week.date); renderedWeeks.push({ ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url }); }
 							}
 							renderedWeeks.sort((a, b) => a.date.localeCompare(b.date));

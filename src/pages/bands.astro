@@ -83,29 +83,33 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 					let positions: PcoPosition[] = [];
 					let teamsById = new Map<string, PcoTeam>();
+					let defaults = new Map<string, Requirement>();
+					let overrides = new Map<string, Requirement>();
 					let requirements = new Map<string, Requirement>();
+					const rebuildRequirements = () => { requirements = new Map(defaults); if (dateInput.value !== '__default__') for (const [id, value] of overrides) requirements.set(id, value); };
 					const updateCount = () => { requiredCount.textContent = String([...requirements.values()].reduce((sum, item) => sum + item.required_count, 0)); };
 					const render = () => {
 						tbody.replaceChildren();
 						for (const position of positions) {
 							const name = position.attributes.name ?? `Position ${position.id}`;
 							const saved = requirements.get(position.id);
+							const defaultSaved = defaults.get(position.id); const overrideSaved = overrides.get(position.id); const editingDefaults = dateInput.value === '__default__';
 							const row = document.createElement('tr');
 							const nameCell = document.createElement('td'); nameCell.textContent = name;
 							const countCell = document.createElement('td');
 							const count = document.createElement('input'); count.type = 'number'; count.min = '0'; count.max = '20'; count.step = '1'; count.value = String(saved?.required_count ?? 0); count.className = 'count-input'; count.setAttribute('aria-label', `${name} players needed`); countCell.append(count);
-							const stateCell = document.createElement('td'); stateCell.className = 'save-state'; stateCell.textContent = saved ? 'Saved' : 'Not needed';
+							const stateCell = document.createElement('td'); stateCell.className = 'save-state'; stateCell.textContent = editingDefaults ? (defaultSaved ? 'Weekly default' : 'Not needed') : (overrideSaved ? 'Sunday override' : defaultSaved ? 'Using default' : 'Not needed');
 							count.addEventListener('change', async () => {
 								const value = Math.max(0, Math.min(20, Math.round(Number(count.value) || 0))); count.value = String(value); count.disabled = true; stateCell.textContent = 'Saving…';
-								if (value === 0) {
-									const { error } = await supabase.from('weekly_instrument_requirements').delete().eq('owner_id', saved?.owner_id ?? session.user.id).eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value).eq('planning_center_team_position_id', position.id);
-									if (error) stateCell.textContent = error.message; else { requirements.delete(position.id); stateCell.textContent = 'Not needed'; }
+								if (editingDefaults) {
+									if (value === 0) { const { error } = await supabase.from('default_instrument_requirements').delete().eq('owner_id', defaultSaved?.owner_id ?? session.user.id).eq('planning_center_team_id', teamSelect.value).eq('planning_center_team_position_id', position.id); if (error) stateCell.textContent = error.message; else defaults.delete(position.id); }
+									else { const next = { owner_id: defaultSaved?.owner_id ?? session.user.id, planning_center_team_id: teamSelect.value, planning_center_team_position_id: position.id, position_name: name, required_count: value, updated_at: new Date().toISOString() }; const { data, error } = await supabase.from('default_instrument_requirements').upsert(next, { onConflict: 'owner_id,planning_center_team_id,planning_center_team_position_id' }).select('id,owner_id,planning_center_team_position_id,position_name,required_count').single(); if (error) stateCell.textContent = error.message; else defaults.set(position.id, data as Requirement); }
 								} else {
-									const next = { owner_id: saved?.owner_id ?? session.user.id, service_date: dateInput.value, planning_center_team_id: teamSelect.value, planning_center_team_position_id: position.id, position_name: name, required_count: value, updated_at: new Date().toISOString() };
-									const { data, error } = await supabase.from('weekly_instrument_requirements').upsert(next, { onConflict: 'owner_id,service_date,planning_center_team_id,planning_center_team_position_id' }).select('id,planning_center_team_position_id,position_name,required_count').single();
-									if (error) stateCell.textContent = error.message; else { requirements.set(position.id, data as Requirement); stateCell.textContent = 'Saved'; }
+									const defaultCount = defaultSaved?.required_count ?? 0;
+									if (value === defaultCount) { const { error } = await supabase.from('weekly_instrument_requirements').delete().eq('owner_id', overrideSaved?.owner_id ?? session.user.id).eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value).eq('planning_center_team_position_id', position.id); if (error) stateCell.textContent = error.message; else overrides.delete(position.id); }
+									else { const next = { owner_id: overrideSaved?.owner_id ?? session.user.id, service_date: dateInput.value, planning_center_team_id: teamSelect.value, planning_center_team_position_id: position.id, position_name: name, required_count: value, updated_at: new Date().toISOString() }; const { data, error } = await supabase.from('weekly_instrument_requirements').upsert(next, { onConflict: 'owner_id,service_date,planning_center_team_id,planning_center_team_position_id' }).select('id,owner_id,planning_center_team_position_id,position_name,required_count').single(); if (error) stateCell.textContent = error.message; else overrides.set(position.id, data as Requirement); }
 								}
-								count.disabled = false; updateCount();
+								count.disabled = false; rebuildRequirements(); render();
 							});
 							row.append(nameCell, countCell, stateCell); tbody.append(row);
 						}
@@ -115,14 +119,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						if (!teamSelect.value || !dateInput.value) { wrap.hidden = true; message.textContent = 'Choose a service date and Planning Center team.'; return; }
 						wrap.hidden = true; message.textContent = 'Loading weekly band…';
 						try {
-							const [loadedPositions, saved] = await Promise.all([
-								fetchAll<PcoPosition>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/team_positions?per_page=100`),
-								supabase.from('weekly_instrument_requirements').select('id,owner_id,planning_center_team_position_id,position_name,required_count').eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value),
-							]);
-							if (saved.error) throw saved.error;
-							positions = loadedPositions.sort((a, b) => (a.attributes.sequence ?? 0) - (b.attributes.sequence ?? 0));
-							requirements = new Map((saved.data ?? []).map((item) => [item.planning_center_team_position_id, item as Requirement]));
-							message.textContent = positions.length ? 'Set a count above zero for each instrument this band needs.' : 'This Planning Center team has no positions.';
+						const weeklyRequest = dateInput.value === '__default__' ? Promise.resolve({ data: [], error: null }) : supabase.from('weekly_instrument_requirements').select('id,owner_id,planning_center_team_position_id,position_name,required_count').eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value);
+						const [loadedPositions, savedDefaults, savedOverrides] = await Promise.all([
+							fetchAll<PcoPosition>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/team_positions?per_page=100`),
+							supabase.from('default_instrument_requirements').select('id,owner_id,planning_center_team_position_id,position_name,required_count').eq('planning_center_team_id', teamSelect.value), weeklyRequest,
+						]);
+						if (savedDefaults.error) throw savedDefaults.error; if (savedOverrides.error) throw savedOverrides.error;
+						positions = loadedPositions.sort((a, b) => (a.attributes.sequence ?? 0) - (b.attributes.sequence ?? 0));
+						defaults = new Map((savedDefaults.data ?? []).map((item) => [item.planning_center_team_position_id, item as Requirement])); overrides = new Map((savedOverrides.data ?? []).map((item) => [item.planning_center_team_position_id, item as Requirement])); rebuildRequirements();
+						message.textContent = positions.length ? (dateInput.value === '__default__' ? 'Set the normal lineup once. Every Sunday will inherit these counts.' : 'This Sunday inherits the defaults. Change a count to create an override; change it back to restore the default.') : 'This Planning Center team has no positions.';
 							render();
 						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not load the weekly band.'; }
 					};
@@ -136,14 +141,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const sundays = [...new Map(plans.filter((plan) => {
 								const date = plan.attributes.sort_date?.slice(0, 10); return date && new Date(`${date}T12:00:00`).getDay() === 0;
 							}).map((plan) => [plan.attributes.sort_date!.slice(0, 10), plan])).values()];
-							dateInput.replaceChildren(new Option(sundays.length ? 'Choose a Sunday plan' : 'No upcoming Sunday plans', ''));
+							dateInput.replaceChildren(new Option('Default for every Sunday', '__default__'));
 							for (const plan of sundays) {
 								const date = plan.attributes.sort_date!.slice(0, 10);
 								const label = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 								dateInput.add(new Option(plan.attributes.title ? `${label} — ${plan.attributes.title}` : label, date));
 							}
-							dateInput.disabled = !sundays.length;
-							message.textContent = sundays.length ? `${sundays.length} upcoming Sunday plan${sundays.length === 1 ? '' : 's'} found.` : 'This team’s service type has no upcoming Sunday plans in Planning Center.';
+							dateInput.disabled = false; dateInput.value = '__default__'; await loadWeek();
 						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not load Planning Center plans.'; }
 					};
 
