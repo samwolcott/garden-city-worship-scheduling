@@ -83,7 +83,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 				} else {
 					const callPco = async (path: string) => {
 						const { data, error } = await supabase.functions.invoke('planning-center', { body: { method: 'GET', path } });
-						if (error) throw error;
+						if (error) {
+							const response = 'context' in error && error.context instanceof Response ? error.context : undefined;
+							let detail = error.message;
+							if (response) {
+								try {
+									const payload = await response.clone().json();
+									detail = payload.error ?? payload.message ?? payload.errors?.[0]?.detail ?? detail;
+								} catch {
+									const body = await response.clone().text();
+									if (body) detail = body;
+								}
+								throw new Error(`Planning Center request failed (${response.status}): ${detail}`);
+							}
+							throw new Error(`Could not reach the scheduling service: ${detail}`);
+						}
 						return data;
 					};
 					const fetchAll = async <T,>(path: string): Promise<T[]> => {
@@ -180,7 +194,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							message.textContent = `${people.length} musicians loaded. New musicians start inactive.`; table.hidden = false; pairingPanel.hidden = false; configurePairSelectors(); renderPairs(); render();
 						});
 						search.addEventListener('input', render); showInactive.addEventListener('change', render);
-					} catch (error) { message.textContent = error instanceof Error ? error.message : 'Could not load Planning Center.'; }
+					} catch (error) {
+						message.classList.add('error-notice');
+						message.textContent = error instanceof Error ? error.message : 'Could not load Planning Center.';
+					}
 				}
 			}
 		</script>
