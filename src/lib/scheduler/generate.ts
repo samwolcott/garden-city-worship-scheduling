@@ -33,7 +33,7 @@ export const preferenceGap = (preference = '') => {
 const isWorshipLeader = (positionName: string) => positionName.toLowerCase().includes('worship leader');
 const positionPreference = (person: Candidate, positionId: string) => person.preferencesByPosition?.[positionId] ?? '';
 
-export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, candidates: Candidate[], pairRules: RequiredPairRule[], existingByDate = new Map<string, ExistingAssignment[]>(), initialHistory = new Map<string, string[]>()): WeekSuggestion[] {
+export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, candidates: Candidate[], pairRules: RequiredPairRule[], existingByDate = new Map<string, ExistingAssignment[]>(), initialHistory = new Map<string, string[]>(), monthlyCap = 2): WeekSuggestion[] {
 	const eligible = new Map(candidates.filter((person) => isEligibleForScheduling(person)).map((person) => [person.id, person]));
 	const history = new Map([...initialHistory].map(([personId, assignedDates]) => [personId, [...assignedDates].sort()]));
 	const results: WeekSuggestion[] = [];
@@ -57,6 +57,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 				const groupIds = [...requiredGroupFor(person.id, pairRules)].filter((id) => !scheduled.has(id));
 				const group = groupIds.map((id) => eligible.get(id));
 				if (group.some((member) => !member || member.blockedDates.includes(date) || scheduled.has(member.id))) continue;
+				if ((group as Candidate[]).some((member) => !member.scheduleEverySunday && new Set((history.get(member.id) ?? []).filter((assignedDate) => assignedDate.slice(0, 7) === date.slice(0, 7))).size >= monthlyCap)) continue;
 				const placements: { person: Candidate; slotIndex: number }[] = [];
 				for (const member of group as Candidate[]) {
 					const weeklyLeaderIndex = member.scheduleEverySunday ? open.findIndex((slot, i) => !placements.some((placement) => placement.slotIndex === i) && member.positionIds.includes(slot.positionId) && isWorshipLeader(slot.positionName)) : -1;
@@ -90,6 +91,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 				if (preference) reasons.push(`Planning Center ${slot.positionName} preference: ${preference}${preferredGap ? ` (${preferredGap}-day minimum)` : ''}`);
 				else reasons.push('No Planning Center serving-frequency preference set');
 				if (last) reasons.push(`Previous assignment considered: ${last}${gapDays !== undefined ? ` (${gapDays} days earlier)` : ''}`); else reasons.push('No earlier assignment found in the lookback period');
+				if (!person.scheduleEverySunday) reasons.push(`${new Set(prior.filter((assignedDate) => assignedDate.slice(0, 7) === date.slice(0, 7))).size} of ${monthlyCap} allowed Sundays already used that month`);
 				const lowestTierCount = Math.min(...tierCounts.values());
 				if ((tierCounts.get(person.skill_level!) ?? 0) === lowestTierCount) reasons.push(`Tier ${person.skill_level} supported the week’s tier balance`);
 				if (prior.length === 0) reasons.push('Had no earlier assignment in this suggested range'); else reasons.push(`${prior.length} earlier assignment${prior.length === 1 ? '' : 's'} in this suggested range`);

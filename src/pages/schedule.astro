@@ -40,6 +40,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							<li>Existing Planning Center assignments fill their matching positions first and count toward the week’s balance.</li>
 							<li>Prior confirmed and unconfirmed Planning Center assignments—including placeholders—are included in the lookback.</li>
 							<li>People with fewer assignments in this suggested range are favored.</li>
+							<li>No musician exceeds the configured monthly maximum; people marked Every Sunday are exempt.</li>
 							<li>Planning Center cadence preferences are minimum spacing rules: every other week is 14 days, monthly is 28 days, and “every 6 weeks” is 42 days.</li>
 							<li>The scheduler favors the tier used least in that week to spread A, B, and C musicians equitably.</li>
 							<li>A musician marked “Every Sunday” is placed in Worship Leader first whenever they are not blocked out.</li>
@@ -53,6 +54,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			<section class="toolbar schedule-toolbar" aria-label="Schedule range">
 				<label>From Sunday<select id="starts-on" disabled><option>Loading Sunday plans…</option></select></label>
 				<label>Through Sunday<select id="ends-on" disabled><option>Loading Sunday plans…</option></select></label>
+				<label>Monthly maximum<input id="monthly-cap" type="number" min="1" max="5" value="2" aria-describedby="monthly-cap-help" /><small id="monthly-cap-help">Every Sunday musicians are exempt.</small></label>
 				<button id="generate" type="button" disabled>Suggest bands</button>
 			</section>
 			<p id="schedule-message" class="notice" role="status">Choose a range containing configured weekly bands.</p>
@@ -79,6 +81,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			const startsOn = document.querySelector<HTMLSelectElement>('#starts-on')!;
 			const endsOn = document.querySelector<HTMLSelectElement>('#ends-on')!;
 			const generateButton = document.querySelector<HTMLButtonElement>('#generate')!;
+			const monthlyCapInput = document.querySelector<HTMLInputElement>('#monthly-cap')!;
 			const publishButton = document.querySelector<HTMLButtonElement>('#publish')!;
 			const message = document.querySelector<HTMLParagraphElement>('#schedule-message')!;
 			const results = document.querySelector<HTMLElement>('#schedule-results')!;
@@ -97,6 +100,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					let candidatesByTeam = new Map<string, Candidate[]>();
 					let priorHistoryByTeam = new Map<string, Map<string, string[]>>();
 					let activePairs: Pair[] = [];
+					let monthlyCap = 2;
+					let schedulingConfiguration: Record<string, unknown> = {};
+					const savedRules = await supabase.from('scheduling_rules').select('configuration').eq('owner_id', session.user.id).maybeSingle();
+					if (!savedRules.error) { schedulingConfiguration = savedRules.data?.configuration ?? {}; const configuredCap = Number(schedulingConfiguration.monthly_maximum); if (Number.isInteger(configuredCap) && configuredCap >= 1 && configuredCap <= 5) monthlyCap = configuredCap; }
+					monthlyCapInput.value = String(monthlyCap);
+					monthlyCapInput.addEventListener('change', async () => { const next = Math.max(1, Math.min(5, Number(monthlyCapInput.value) || 2)); monthlyCapInput.value = String(next); const configuration = { ...schedulingConfiguration, monthly_maximum: next }; const { error } = await supabase.from('scheduling_rules').upsert({ owner_id: session.user.id, configuration, updated_at: new Date().toISOString() }, { onConflict: 'owner_id' }); if (error) { message.classList.add('error-notice'); message.textContent = error.message; monthlyCapInput.value = String(monthlyCap); return; } monthlyCap = next; schedulingConfiguration = configuration; message.classList.remove('error-notice'); message.textContent = `Monthly maximum saved at ${next} Sunday${next === 1 ? '' : 's'} per musician.`; });
 					const savedTeamSettings = await supabase.from('team_settings').select('planning_center_team_id,visible');
 					if (savedTeamSettings.error) { message.classList.add('error-notice'); message.textContent = savedTeamSettings.error.message; throw savedTeamSettings.error; }
 					const hiddenTeamIds = new Set((savedTeamSettings.data ?? []).filter((item) => !item.visible).map((item) => item.planning_center_team_id));
@@ -159,7 +168,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								if (hasPairedRule) { swap.disabled = true; swap.title = 'This musician belongs to a required pair and cannot be swapped individually.'; }
 								swap.addEventListener('click', () => {
 									const occupied = new Set([...week.existing.map((member) => member.personId), ...week.assignments.filter((other) => other !== assignment && other.personId !== assignment.personId).map((other) => other.personId)]);
-									const alternatives = (candidatesByTeam.get(week.teamId) ?? []).filter((candidate) => { const otherDates = [...(priorHistoryByTeam.get(week.teamId)?.get(candidate.id) ?? []), ...renderedWeeks.flatMap((rendered) => [...rendered.existing, ...rendered.assignments].filter((member) => member.personId === candidate.id).map(() => rendered.date))]; const preference = candidate.preferencesByPosition?.[assignment.positionId] ?? ''; const gap = preferenceGap(preference); const respectsCadence = preference.toLowerCase() !== 'unavailable' && (!gap || otherDates.every((otherDate) => Math.abs(Date.parse(week.date) - Date.parse(otherDate)) / 86400000 >= gap)); return candidate.id !== assignment.personId && !occupied.has(candidate.id) && !candidate.blockedDates.includes(week.date) && candidate.positionIds.includes(assignment.positionId) && respectsCadence && [...requiredGroupFor(candidate.id, activePairs)].every((id) => id === candidate.id || occupied.has(id)); });
+									const alternatives = (candidatesByTeam.get(week.teamId) ?? []).filter((candidate) => { const otherDates = [...(priorHistoryByTeam.get(week.teamId)?.get(candidate.id) ?? []), ...renderedWeeks.flatMap((rendered) => [...rendered.existing, ...rendered.assignments].filter((member) => member.personId === candidate.id).map(() => rendered.date))]; const preference = candidate.preferencesByPosition?.[assignment.positionId] ?? ''; const gap = preferenceGap(preference); const respectsCadence = preference.toLowerCase() !== 'unavailable' && (!gap || otherDates.every((otherDate) => Math.abs(Date.parse(week.date) - Date.parse(otherDate)) / 86400000 >= gap)); const monthCount = new Set(otherDates.filter((date) => date.slice(0, 7) === week.date.slice(0, 7))).size; return candidate.id !== assignment.personId && !occupied.has(candidate.id) && !candidate.blockedDates.includes(week.date) && candidate.positionIds.includes(assignment.positionId) && respectsCadence && (candidate.scheduleEverySunday || monthCount < monthlyCap) && [...requiredGroupFor(candidate.id, activePairs)].every((id) => id === candidate.id || occupied.has(id)); });
 									if (!alternatives.length) { message.textContent = `No other eligible, available ${assignment.positionName} musicians can be swapped in without breaking a scheduling rule.`; return; }
 									const editor = document.createElement('span'); editor.className = 'swap-editor'; const select = document.createElement('select'); select.setAttribute('aria-label', `Replacement for ${assignment.personName}`); select.append(new Option('Choose replacement', ''), ...alternatives.sort((a, b) => a.name.localeCompare(b.name)).map((candidate) => new Option(`${candidate.name} · Tier ${candidate.skill_level}`, candidate.id))); const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'text-button'; cancel.textContent = 'Cancel'; cancel.addEventListener('click', renderSchedule); select.addEventListener('change', async () => { if (!select.value) return; const replacement = alternatives.find((candidate) => candidate.id === select.value)!; select.disabled = true; cancel.disabled = true; const row = draftRows.find((draft) => draft.planning_center_plan_id === week.planId && draft.planning_center_team_id === week.teamId && draft.planning_center_person_id === assignment.personId && draft.position_name === assignment.positionName && !draft.published_at); if (row) { const { error } = await supabase.from('draft_assignments').update({ planning_center_person_id: replacement.id, person_name: replacement.name, manually_selected: true }).eq('id', row.id); if (error) { message.classList.add('error-notice'); message.textContent = error.message; renderSchedule(); return; } row.planning_center_person_id = replacement.id; row.person_name = replacement.name; } assignment.personId = replacement.id; assignment.personName = replacement.name; assignment.tier = replacement.skill_level!; assignment.reasons = [`Manually swapped in for ${assignment.positionName}`, `Assigned to ${assignment.positionName} in Planning Center`, 'No Planning Center blockout on this date']; message.classList.remove('error-notice'); message.textContent = `${replacement.name} replaced the original ${assignment.positionName} suggestion for ${new Date(`${week.date}T12:00:00`).toLocaleDateString()}.`; renderSchedule(); }); editor.append(select, cancel); actions.replaceChildren(editor);
 								});
@@ -195,7 +204,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const pairs = (pairsResult.data ?? []) as Pair[]; activePairs = pairs;
 							const teamNames = new Map(activeTeams.map((team) => [team.id, String(team.attributes.name ?? `Team ${team.id}`)]));
 							teamServiceTypes = new Map(activeTeams.map((team): [string, string] => [team.id, team.relationships?.service_type?.data?.id ?? '']).filter((entry) => entry[1]));
-							const teamIds = [...new Set([...requirements, ...defaultRequirements].map((item) => item.planning_center_team_id))]; renderedWeeks = [];
+							const teamIds = [...new Set([...requirements, ...defaultRequirements].map((item) => item.planning_center_team_id))]; renderedWeeks = []; const schedulingHistory = new Map<string, string[]>();
 							for (const teamId of teamIds) {
 								const teamRequirements = requirements.filter((item) => item.planning_center_team_id === teamId);
 								const teamDefaults = defaultRequirements.filter((item) => item.planning_center_team_id === teamId);
@@ -250,8 +259,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								const priorHistory = new Map<string, string[]>();
 								await Promise.all(priorPlans.map(async (plan) => { const date = String(plan.attributes.sort_date ?? '').slice(0, 10); const members = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans/${plan.id}/team_members?where[team_id]=${encodeURIComponent(teamId)}&per_page=100`); const seen = new Set<string>(); for (const member of members.filter((item) => !['d', 'declined'].includes(String(item.attributes.status ?? '').toLowerCase()))) { const personId = member.relationships?.person?.data?.id; if (!personId || seen.has(personId)) continue; seen.add(personId); priorHistory.set(personId, [...(priorHistory.get(personId) ?? []), date]); } }));
 								priorHistoryByTeam.set(teamId, priorHistory);
+								for (const [personId, assignedDates] of priorHistory) schedulingHistory.set(personId, [...new Set([...(schedulingHistory.get(personId) ?? []), ...assignedDates])].sort());
 								const existingForScheduler = new Map([...existingByDate].map(([date, members]) => [date, members.map((member) => ({ personId: member.personId, tier: settings.get(member.personId)?.skill_level ?? null }))]));
-								for (const week of suggestWeeks(dates, slotsByDate, availability, pairs, existingForScheduler, priorHistory)) { const plan = plansByDate.get(week.date); renderedWeeks.push({ ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url, existing: existingByDate.get(week.date) ?? [] }); }
+								const suggestions = suggestWeeks(dates, slotsByDate, availability, pairs, existingForScheduler, schedulingHistory, monthlyCap);
+								for (const week of suggestions) { const plan = plansByDate.get(week.date); const rendered = { ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url, existing: existingByDate.get(week.date) ?? [] }; renderedWeeks.push(rendered); for (const personId of new Set([...rendered.existing.map((member) => member.personId), ...rendered.assignments.map((member) => member.personId)])) schedulingHistory.set(personId, [...new Set([...(schedulingHistory.get(personId) ?? []), week.date])].sort()); }
 							}
 							renderedWeeks.sort((a, b) => a.date.localeCompare(b.date));
 							const { data: draft, error: draftError } = await supabase.from('schedule_drafts').insert({ owner_id: session.user.id, name: `Band suggestions ${startsOn.value}–${endsOn.value}`, starts_on: startsOn.value, ends_on: endsOn.value }).select('id').single();

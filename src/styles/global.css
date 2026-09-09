@@ -93,7 +93,8 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .team-visibility-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: .65rem 1rem; }
 .team-visibility-list label { display: flex; align-items: center; gap: .5rem; font-size: .88rem; }
 .team-visibility-list input { flex: none; min-width: 0; }
-.schedule-toolbar { grid-template-columns: 1fr 1fr auto; }
+.schedule-toolbar { grid-template-columns: 1fr 1fr .65fr auto; }
+.schedule-toolbar label small { color: var(--muted); font-size: .7rem; font-weight: 400; }
 .suggestion-rules { margin-top: 2.5rem; padding: 1.2rem; background: var(--surface); border: 1px solid var(--line); }
 .suggestion-rules summary { color: var(--garden); cursor: pointer; font-weight: 750; }
 .rules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 1.25rem; }
