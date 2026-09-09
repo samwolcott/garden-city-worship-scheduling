@@ -6,6 +6,8 @@ const allowedReads = [
   /^\/services\/v2\/teams(?:\/[^/?]+\/(?:people|person_team_position_assignments|team_positions))?(?:\?.*)?$/,
 ];
 const publishPath = /^\/services\/v2\/service_types\/[^/?]+\/plans\/[^/?]+\/team_members$/;
+const createPositionAssignmentPath = /^\/services\/v2\/service_types\/[^/?]+\/team_positions\/[^/?]+\/person_team_position_assignments$/;
+const deletePositionAssignmentPath = /^\/services\/v2\/people\/[^/?]+\/person_team_position_assignments\/[^/?]+$/;
 
 function cors(origin: string) {
   const allowedOrigin = Deno.env.get('APP_ORIGIN') ?? '';
@@ -34,12 +36,20 @@ Deno.serve(async (request) => {
   const path = input.path ?? '';
   const isRead = method === 'GET' && allowedReads.some((pattern) => pattern.test(path));
   const isPublish = method === 'POST' && publishPath.test(path);
-  if (!isRead && !isPublish) return Response.json({ error: 'Planning Center operation is not allowed' }, { status: 400, headers });
+  const isPositionCreate = method === 'POST' && createPositionAssignmentPath.test(path);
+  const isPositionDelete = method === 'DELETE' && deletePositionAssignmentPath.test(path);
+  if (!isRead && !isPublish && !isPositionCreate && !isPositionDelete) return Response.json({ error: 'Planning Center operation is not allowed' }, { status: 400, headers });
   if (isPublish) {
     const data = input.body?.data as { type?: string; attributes?: Record<string, unknown> } | undefined;
     if (!data || data.type !== 'PlanPerson' || !data.attributes) return Response.json({ error: 'Invalid assignment' }, { status: 400, headers });
     data.attributes.prepare_notification = false;
     delete data.attributes.notification_prepared_at;
+  }
+  if (isPositionCreate) {
+    const data = input.body?.data as { type?: string; attributes?: Record<string, unknown> } | undefined;
+    const personId = data?.attributes?.person_id;
+    if (!data || data.type !== 'PersonTeamPositionAssignment' || typeof personId !== 'string' || !personId) return Response.json({ error: 'Invalid position assignment' }, { status: 400, headers });
+    input.body = { data: { type: 'PersonTeamPositionAssignment', attributes: { person_id: personId } } };
   }
 
   const appId = Deno.env.get('PLANNING_CENTER_APP_ID');
@@ -48,7 +58,8 @@ Deno.serve(async (request) => {
   const response = await fetch(`https://api.planningcenteronline.com${path}`, {
     method,
     headers: { Authorization: `Basic ${btoa(`${appId}:${secret}`)}`, 'Content-Type': 'application/json', 'User-Agent': 'Garden City Worship Scheduler' },
-    body: isPublish ? JSON.stringify(input.body) : undefined,
+    body: isPublish || isPositionCreate ? JSON.stringify(input.body) : undefined,
   });
-  return new Response(await response.text(), { status: response.status, headers: { ...headers, 'Content-Type': 'application/json' } });
+  const responseBody = await response.text();
+  return new Response(responseBody || '{}', { status: response.status === 204 ? 200 : response.status, headers: { ...headers, 'Content-Type': 'application/json' } });
 });

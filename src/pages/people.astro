@@ -60,7 +60,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			type PcoTeam = { id: string; attributes: { name?: string; archived_at?: string | null; deleted_at?: string | null }; relationships?: { service_type?: { data?: { id?: string } } } };
 			type PcoServiceType = { id: string; attributes: { name?: string; archived_at?: string | null; deleted_at?: string | null } };
 			type PcoPosition = { id: string; attributes: { name?: string } };
-			type PcoPositionAssignment = { relationships?: { person?: { data?: { id?: string } }; team_position?: { data?: { id?: string } } } };
+			type PcoPositionAssignment = { id: string; relationships?: { person?: { data?: { id?: string } }; team_position?: { data?: { id?: string } } } };
 			type Setting = { owner_id: string; planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null };
 			type PairRule = { id: string; owner_id: string; person_one_id: string; person_two_id: string };
 			type TeamSetting = { owner_id: string; planning_center_team_id: string; visible: boolean };
@@ -88,6 +88,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			let settings = new Map<string, Setting>();
 			let pairRules: PairRule[] = [];
 			let instrumentsByPerson = new Map<string, string[]>();
+			let assignmentsByPerson = new Map<string, PcoPositionAssignment[]>();
+			let teamPositions: PcoPosition[] = [];
 			let availableTeams: PcoTeam[] = [];
 			let teamSettings = new Map<string, TeamSetting>();
 			let sortColumn: 'musician' | 'instrument' = 'musician';
@@ -101,8 +103,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 				if (!session) {
 					message.textContent = 'Sign in from the home page to manage musicians.';
 				} else {
-					const callPco = async (path: string) => {
-						const { data, error } = await supabase.functions.invoke('planning-center', { body: { method: 'GET', path } });
+					const callPco = async (path: string, method = 'GET', body?: Record<string, unknown>) => {
+						const { data, error } = await supabase.functions.invoke('planning-center', { body: { method, path, body } });
 						if (error) {
 							const response = 'context' in error && error.context instanceof Response ? error.context : undefined;
 							let detail = error.message;
@@ -160,7 +162,27 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							if (!name.toLowerCase().includes(query) || (!showInactive.checked && !saved.active)) continue;
 							const row = document.createElement('tr');
 							const nameCell = document.createElement('td'); nameCell.textContent = name;
-							const instrumentCell = document.createElement('td'); instrumentCell.textContent = instrumentsByPerson.get(person.id)?.join(', ') || 'Not assigned';
+							const instrumentCell = document.createElement('td');
+							const instrumentEditor = document.createElement('details'); instrumentEditor.className = 'instrument-editor'; const instrumentSummary = document.createElement('summary'); instrumentSummary.textContent = instrumentsByPerson.get(person.id)?.join(', ') || 'Not assigned';
+							const instrumentOptions = document.createElement('div'); instrumentOptions.className = 'instrument-options'; const assignedPositionIds = new Set((assignmentsByPerson.get(person.id) ?? []).map((assignment) => assignment.relationships?.team_position?.data?.id));
+							for (const position of teamPositions) { const label = document.createElement('label'); const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.value = position.id; checkbox.checked = assignedPositionIds.has(position.id); label.append(checkbox, document.createTextNode(position.attributes.name ?? `Position ${position.id}`)); instrumentOptions.append(label); }
+							const saveInstruments = document.createElement('button'); saveInstruments.type = 'button'; saveInstruments.textContent = 'Save instruments';
+							saveInstruments.addEventListener('click', async () => {
+								const selected = new Set([...instrumentOptions.querySelectorAll<HTMLInputElement>('input:checked')].map((input) => input.value)); const current = assignmentsByPerson.get(person.id) ?? [];
+								const removals = current.filter((assignment) => { const id = assignment.relationships?.team_position?.data?.id; return id && !selected.has(id); }); const additions = teamPositions.filter((position) => selected.has(position.id) && !assignedPositionIds.has(position.id));
+								if (!removals.length && !additions.length) { instrumentEditor.open = false; return; }
+								if (!window.confirm(`Update ${name}'s Planning Center instruments? This will add ${additions.length} and remove ${removals.length} team position assignment${removals.length === 1 ? '' : 's'}.`)) return;
+								saveInstruments.disabled = true; saveInstruments.textContent = 'Saving…';
+								try {
+									const serviceTypeId = availableTeams.find((team) => team.id === teamSelect.value)?.relationships?.service_type?.data?.id; if (!serviceTypeId) throw new Error('Could not identify this team’s service type.');
+									for (const assignment of removals) await callPco(`/services/v2/people/${encodeURIComponent(person.id)}/person_team_position_assignments/${encodeURIComponent(assignment.id)}`, 'DELETE');
+									for (const position of additions) await callPco(`/services/v2/service_types/${encodeURIComponent(serviceTypeId)}/team_positions/${encodeURIComponent(position.id)}/person_team_position_assignments`, 'POST', { data: { type: 'PersonTeamPositionAssignment', attributes: { person_id: person.id } } });
+									const refreshed = await fetchAll<PcoPositionAssignment>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/person_team_position_assignments?per_page=100`); assignmentsByPerson = new Map(); instrumentsByPerson = new Map(); const positionNames = new Map(teamPositions.map((position) => [position.id, position.attributes.name ?? `Position ${position.id}`]));
+									for (const assignment of refreshed) { const personId = assignment.relationships?.person?.data?.id; const positionId = assignment.relationships?.team_position?.data?.id; if (!personId || !positionId) continue; assignmentsByPerson.set(personId, [...(assignmentsByPerson.get(personId) ?? []), assignment]); const positionName = positionNames.get(positionId); if (positionName) instrumentsByPerson.set(personId, [...(instrumentsByPerson.get(personId) ?? []), positionName]); }
+									render(); message.textContent = `${name}'s instruments were updated in Planning Center.`;
+								} catch (error) { saveInstruments.disabled = false; saveInstruments.textContent = 'Save instruments'; message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not update instruments.'; }
+							});
+							instrumentOptions.append(saveInstruments); instrumentEditor.append(instrumentSummary, instrumentOptions); instrumentCell.append(instrumentEditor);
 							const statusCell = document.createElement('td');
 							const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.checked = saved.active; toggle.setAttribute('aria-label', `Active: ${name}`); statusCell.append(toggle, document.createTextNode(toggle.checked ? ' Active' : ' Inactive'));
 							const tierCell = document.createElement('td');
@@ -246,13 +268,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							]);
 							if (saved.error) throw saved.error;
 							if (savedPairs.error) throw savedPairs.error;
-							people = loadedPeople; settings = new Map((saved.data ?? []).map((item) => [item.planning_center_person_id, item as Setting]));
+							people = loadedPeople; teamPositions = positions; settings = new Map((saved.data ?? []).map((item) => [item.planning_center_person_id, item as Setting]));
 							const positionNames = new Map(positions.map((position) => [position.id, position.attributes.name ?? `Position ${position.id}`]));
 							instrumentsByPerson = new Map();
+							assignmentsByPerson = new Map();
 							for (const assignment of assignments) {
 								const personId = assignment.relationships?.person?.data?.id;
 								const positionId = assignment.relationships?.team_position?.data?.id;
 								if (!personId || !positionId) continue;
+								assignmentsByPerson.set(personId, [...(assignmentsByPerson.get(personId) ?? []), assignment]);
 								const names = instrumentsByPerson.get(personId) ?? [];
 								const positionName = positionNames.get(positionId);
 								if (positionName && !names.includes(positionName)) names.push(positionName);
