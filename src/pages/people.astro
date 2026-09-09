@@ -184,7 +184,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							});
 							instrumentOptions.append(saveInstruments); instrumentEditor.append(instrumentSummary, instrumentOptions); instrumentCell.append(instrumentEditor);
 							const statusCell = document.createElement('td');
-							const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.checked = saved.active; toggle.setAttribute('aria-label', `Active: ${name}`); statusCell.append(toggle, document.createTextNode(toggle.checked ? ' Active' : ' Inactive'));
+							let isActive = saved.active; const statusButton = document.createElement('button'); statusButton.type = 'button'; statusButton.className = `status-toggle ${isActive ? 'is-active' : 'is-inactive'}`; const updateStatusButton = () => { statusButton.textContent = isActive ? 'Active' : 'Inactive'; statusButton.className = `status-toggle ${isActive ? 'is-active' : 'is-inactive'}`; statusButton.setAttribute('aria-pressed', String(isActive)); statusButton.setAttribute('aria-label', `${name} is ${isActive ? 'active' : 'inactive'}. Click to change.`); }; updateStatusButton(); statusCell.append(statusButton);
 							const tierCell = document.createElement('td');
 							const tier = document.createElement('select'); tier.setAttribute('aria-label', `Band tier for ${name}`);
 							for (const [value, label] of [['', 'Not assigned'], ['A', 'A'], ['B', 'B'], ['C', 'C']]) tier.add(new Option(label, value, false, value === (saved.skill_level ?? '')));
@@ -192,12 +192,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const stateCell = document.createElement('td'); stateCell.className = 'save-state'; stateCell.textContent = saved.active ? (saved.skill_level ? 'Eligible' : 'Needs band tier') : 'Excluded';
 							const save = async () => {
 								stateCell.textContent = 'Saving…';
-								const next: Setting = { owner_id: saved.owner_id, planning_center_person_id: person.id, active: toggle.checked, skill_level: (tier.value || null) as Setting['skill_level'] };
+								const next: Setting = { owner_id: saved.owner_id, planning_center_person_id: person.id, active: isActive, skill_level: (tier.value || null) as Setting['skill_level'] };
 								const { error } = await supabase.from('member_settings').upsert(next, { onConflict: 'owner_id,planning_center_person_id' });
-								if (error) { stateCell.textContent = error.message; return; }
-								settings.set(person.id, next); stateCell.textContent = next.active ? (next.skill_level ? 'Eligible' : 'Needs band tier') : 'Excluded'; render();
+								if (error) { stateCell.textContent = error.message; return false; }
+								settings.set(person.id, next); stateCell.textContent = next.active ? (next.skill_level ? 'Eligible' : 'Needs band tier') : 'Excluded'; render(); return true;
 							};
-							toggle.addEventListener('change', save); tier.addEventListener('change', save);
+							statusButton.addEventListener('click', async () => { const previous = isActive; isActive = !isActive; updateStatusButton(); statusButton.disabled = true; if (!(await save())) { isActive = previous; updateStatusButton(); statusButton.disabled = false; } }); tier.addEventListener('change', save);
 							row.append(nameCell, instrumentCell, statusCell, tierCell, stateCell); tbody.append(row);
 						}
 					};
