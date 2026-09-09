@@ -53,6 +53,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			import { getSupabase, supabaseConfigured } from '../lib/supabase';
 			type PcoPerson = { id: string; attributes: { name?: string; first_name?: string; last_name?: string } };
 			type PcoTeam = { id: string; attributes: { name?: string } };
+			type PcoServiceType = { id: string; attributes: { name?: string } };
 			type Setting = { planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null };
 			type PairRule = { id: string; person_one_id: string; person_two_id: string };
 
@@ -175,10 +176,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					});
 
 					try {
-						const teams = await fetchAll<PcoTeam>('/services/v2/teams?per_page=100');
+						let teams = await fetchAll<PcoTeam>('/services/v2/teams?per_page=100');
+						if (!teams.length) {
+							const serviceTypes = await fetchAll<PcoServiceType>('/services/v2/service_types?per_page=100');
+							const nestedTeams = await Promise.all(serviceTypes.map((serviceType) => fetchAll<PcoTeam>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)));
+							teams = [...new Map(nestedTeams.flat().map((team) => [team.id, team])).values()];
+						}
 						teamSelect.replaceChildren(new Option('Choose a team', ''));
 						for (const team of teams) teamSelect.add(new Option(team.attributes.name ?? `Team ${team.id}`, team.id));
-						teamSelect.disabled = false; message.textContent = 'Choose a Planning Center team to load its musicians.';
+						teamSelect.disabled = !teams.length;
+						if (!teams.length) {
+							message.classList.add('error-notice');
+							message.textContent = 'Planning Center connected, but this account can see 0 Services teams. Confirm that these are Personal Access Token credentials for a Planning Center user with access to Services and its teams.';
+						} else {
+							message.textContent = `${teams.length} Planning Center team${teams.length === 1 ? '' : 's'} loaded. Choose one to load its musicians.`;
+						}
 						teamSelect.addEventListener('change', async () => {
 							if (!teamSelect.value) return;
 							message.textContent = 'Loading musicians…'; table.hidden = true;
