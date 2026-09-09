@@ -49,5 +49,5 @@ Deno.serve(async (request) => {
     headers: { Authorization: `Basic ${btoa(`${appId}:${secret}`)}`, 'Content-Type': 'application/json', 'User-Agent': 'Garden City Worship Scheduler' },
     body: isPublish ? JSON.stringify(input.body) : undefined,
   });
-  return new Response(await response.text(), { status: response.status, headers: { ...headers, 'Content-Type': response.headers.get('content-type') ?? 'application/json' } });
+  return new Response(await response.text(), { status: response.status, headers: { ...headers, 'Content-Type': 'application/json' } });
 });
