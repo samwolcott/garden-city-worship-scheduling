@@ -90,6 +90,15 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .team-visibility-list label { display: flex; align-items: center; gap: .5rem; font-size: .88rem; }
 .team-visibility-list input { flex: none; min-width: 0; }
 .schedule-toolbar { grid-template-columns: 1fr 1fr auto; }
+.suggestion-rules { margin-top: 2.5rem; padding: 1.2rem; background: var(--surface); border: 1px solid var(--line); }
+.suggestion-rules summary { color: var(--garden); cursor: pointer; font-weight: 750; }
+.rules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 1.25rem; }
+.rules-grid section { padding-left: 1rem; border-left: 2px solid var(--garden-soft); }
+.rules-grid h2 { margin: .25rem 0 .65rem; font-size: 1.05rem; }
+.rules-grid ul { margin: 0; padding-left: 1.15rem; color: var(--muted); font-size: .9rem; line-height: 1.55; }
+.rules-grid li + li { margin-top: .35rem; }
+.rule-kind { margin: 0; color: #b55f37; font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.rules-note { margin: 1.2rem 0 0; padding-top: 1rem; color: var(--muted); border-top: 1px solid var(--line); font-size: .84rem; line-height: 1.5; }
 .schedule-results { display: grid; gap: 1rem; margin-top: 1.5rem; }
 .week-card { overflow: hidden; background: #fffdf7; border: 1px solid #ded8ca; border-radius: 14px; }
 .week-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.2rem; border-bottom: 1px solid #e7e1d5; }
@@ -129,6 +138,7 @@ th { color: var(--garden); }
 	.pair-form { grid-template-columns: 1fr; }
 	.pair-form > span { padding: 0; }
 	.schedule-toolbar { grid-template-columns: 1fr; }
+	.rules-grid { grid-template-columns: 1fr; gap: 1.25rem; }
 	.week-heading, .publish-bar { align-items: stretch; flex-direction: column; }
 	.assignment-list li > span:first-child { grid-template-columns: 1fr; gap: .15rem; }
 	.team-visibility-list { grid-template-columns: 1fr; }
