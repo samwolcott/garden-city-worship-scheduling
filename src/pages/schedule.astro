@@ -29,7 +29,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						<ul>
 							<li>The musician must be marked active and have a Band tier.</li>
 							<li>They must be assigned to the instrument position in Planning Center.</li>
-							<li>Planning Center blockout dates make them unavailable.</li>
+							<li>Planning Center blockout occurrences make them unavailable, including recurring blockouts and recurrence exceptions.</li>
 							<li>Musicians linked by a “schedule together” rule are placed together or not at all.</li>
 						</ul>
 					</section>
@@ -252,7 +252,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								const eligiblePeople = people.filter((person) => settings.get(person.id)?.active && settings.get(person.id)?.skill_level);
 								const availability = await Promise.all(eligiblePeople.map(async (person) => {
 									const blocks = await fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts?filter=future&per_page=100`);
-									const setting = settings.get(person.id)!; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], blockedDates: blockedDates(blocks, dates), preferencesByPosition: preferencesByPerson.get(person.id) ?? {}, scheduleEverySunday: setting.schedule_every_sunday } as Candidate;
+									const occurrences = (await Promise.all(blocks.map((block) => fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts/${block.id}/blockout_dates?per_page=100`)))).flat();
+									const setting = settings.get(person.id)!; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], blockedDates: blockedDates(occurrences, dates), preferencesByPosition: preferencesByPerson.get(person.id) ?? {}, scheduleEverySunday: setting.schedule_every_sunday } as Candidate;
 								}));
 								candidatesByTeam.set(teamId, availability);
 								const maxPreferenceGap = Math.max(0, ...availability.flatMap((candidate) => Object.values(candidate.preferencesByPosition ?? {}).map(preferenceGap))); const lookbackDays = Math.max(84, maxPreferenceGap);

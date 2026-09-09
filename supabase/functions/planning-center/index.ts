@@ -1,7 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const allowedReads = [
-  /^\/services\/v2\/people(?:\/[^/?]+\/(?:blockouts|person_team_position_assignments|schedules|scheduling_preferences))?(?:\?.*)?$/,
+  /^\/services\/v2\/people(?:\/[^/?]+\/(?:blockouts(?:\/[^/?]+\/blockout_dates)?|person_team_position_assignments|schedules|scheduling_preferences))?(?:\?.*)?$/,
   /^\/services\/v2\/service_types(?:\/[^/?]+\/(?:plans|teams|team_positions)(?:\/[^/?]+(?:\/plan_times|\/team_members)?)?)?(?:\?.*)?$/,
   /^\/services\/v2\/teams(?:\/[^/?]+\/(?:people|person_team_position_assignments|team_positions))?(?:\?.*)?$/,
 ];
