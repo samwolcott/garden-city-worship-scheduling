@@ -37,6 +37,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						<p class="rule-kind">Balanced when possible</p>
 						<h2>Rotation &amp; band mix</h2>
 						<ul>
+							<li>Existing Planning Center assignments fill their matching positions first and count toward the week’s balance.</li>
 							<li>People with fewer assignments in this suggested range are favored.</li>
 							<li>Planning Center cadence preferences are respected: monthly aims for about 3 weeks between dates; every-other-week aims for about 12 days.</li>
 							<li>The scheduler favors the tier used least in that week to spread A, B, and C musicians equitably.</li>
@@ -68,7 +69,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			type Setting = { planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null };
 			type Pair = { person_one_id: string; person_two_id: string };
 			type DraftRow = { id: string; planning_center_plan_id: string; planning_center_person_id: string; planning_center_team_id: string; position_name: string; person_name: string; planning_center_plan_person_id: string | null; published_at: string | null };
-			type RenderedWeek = WeekSuggestion & { teamId: string; teamName: string; planId?: string; planUrl?: string };
+			type ExistingPlanAssignment = { personId: string; personName: string; positionName: string; status: string; fillsRequirement: boolean };
+			type RenderedWeek = WeekSuggestion & { teamId: string; teamName: string; planId?: string; planUrl?: string; existing: ExistingPlanAssignment[] };
 
 			const startsOn = document.querySelector<HTMLSelectElement>('#starts-on')!;
 			const endsOn = document.querySelector<HTMLSelectElement>('#ends-on')!;
@@ -141,6 +143,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const plan = document.createElement(week.planUrl ? 'a' : 'span'); plan.textContent = week.planId ? 'Planning Center plan found' : 'No matching plan'; if (week.planUrl) { (plan as HTMLAnchorElement).href = week.planUrl; (plan as HTMLAnchorElement).target = '_blank'; }
 							heading.append(title, plan); card.append(heading);
 							const list = document.createElement('ul'); list.className = 'assignment-list';
+							for (const assignment of week.existing) { const item = document.createElement('li'); item.className = 'existing-assignment'; item.innerHTML = `<span><strong>${assignment.positionName}</strong>${assignment.personName}</span><span class="existing-chip">Already scheduled · ${assignment.status}</span>`; list.append(item); }
 							for (const assignment of week.assignments) { const item = document.createElement('li'); item.innerHTML = `<span><strong>${assignment.positionName}</strong>${assignment.personName}</span><span class="tier-chip">Tier ${assignment.tier}</span>`; list.append(item); }
 							for (const slot of week.unfilled) { const item = document.createElement('li'); item.className = 'unfilled'; item.innerHTML = `<span><strong>${slot.positionName}</strong>No eligible, available musician</span><span>Unfilled</span>`; list.append(item); }
 							card.append(list); results.append(card);
@@ -184,6 +187,20 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								const slotsByDate = new Map<string, Slot[]>();
 								for (const date of candidateDates) { const counts = new Map(teamDefaults.map((item) => [item.planning_center_team_position_id, { name: item.position_name, count: item.required_count }])); for (const item of teamRequirements.filter((entry) => entry.service_date === date)) counts.set(item.planning_center_team_position_id, { name: item.position_name, count: item.required_count }); const slots: Slot[] = []; for (const [positionId, value] of counts) for (let i = 0; i < value.count; i++) slots.push({ positionId, positionName: value.name }); if (slots.length) slotsByDate.set(date, slots); }
 								const dates = [...slotsByDate.keys()].sort();
+								const existingByDate = new Map<string, ExistingPlanAssignment[]>();
+								await Promise.all(dates.map(async (date) => {
+									const plan = plansByDate.get(date); if (!plan) { existingByDate.set(date, []); return; }
+									const members = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans/${plan.id}/team_members?where[team_id]=${encodeURIComponent(teamId)}&per_page=100`);
+									const scheduledMembers = members.filter((member) => !['d', 'declined'].includes(String(member.attributes.status ?? '').toLowerCase()));
+									const remaining = [...(slotsByDate.get(date) ?? [])];
+									const existing = scheduledMembers.map((member) => {
+										const positionName = String(member.attributes.team_position_name ?? 'Team member');
+										const slotIndex = remaining.findIndex((slot) => slot.positionName.toLowerCase() === positionName.toLowerCase());
+										const fillsRequirement = slotIndex >= 0; if (fillsRequirement) remaining.splice(slotIndex, 1);
+										return { personId: member.relationships?.person?.data?.id ?? '', personName: String(member.attributes.name ?? 'Scheduled musician'), positionName, status: String(member.attributes.status ?? 'Scheduled'), fillsRequirement };
+									}).filter((member) => member.personId);
+									existingByDate.set(date, existing); slotsByDate.set(date, remaining);
+								}));
 								const [people, assignments] = await Promise.all([
 									fetchAll<Resource>(`/services/v2/teams/${encodeURIComponent(teamId)}/people?per_page=100`),
 									fetchAll<Resource>(`/services/v2/teams/${encodeURIComponent(teamId)}/person_team_position_assignments?per_page=100`),
@@ -195,7 +212,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 									const [blocks, preferences] = await Promise.all([fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts?filter=future&per_page=100`), fetchAll<Resource>(`/services/v2/people/${person.id}/scheduling_preferences?per_page=100`)]);
 									const setting = settings.get(person.id)!; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], blockedDates: blockedDates(blocks, dates), preference: preferences[0]?.attributes.preference } as Candidate;
 								}));
-								for (const week of suggestWeeks(dates, slotsByDate, availability, pairs)) { const plan = plansByDate.get(week.date); renderedWeeks.push({ ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url }); }
+								const existingForScheduler = new Map([...existingByDate].map(([date, members]) => [date, members.map((member) => ({ personId: member.personId, tier: settings.get(member.personId)?.skill_level ?? null }))]));
+								for (const week of suggestWeeks(dates, slotsByDate, availability, pairs, existingForScheduler)) { const plan = plansByDate.get(week.date); renderedWeeks.push({ ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url, existing: existingByDate.get(week.date) ?? [] }); }
 							}
 							renderedWeeks.sort((a, b) => a.date.localeCompare(b.date));
 							const { data: draft, error: draftError } = await supabase.from('schedule_drafts').insert({ owner_id: session.user.id, name: `Band suggestions ${startsOn.value}–${endsOn.value}`, starts_on: startsOn.value, ends_on: endsOn.value }).select('id').single();
@@ -203,7 +221,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const rows = renderedWeeks.flatMap((week) => week.planId ? week.assignments.map((assignment) => ({ owner_id: session.user.id, draft_id: draftId, planning_center_plan_id: week.planId!, planning_center_person_id: assignment.personId, planning_center_team_id: week.teamId, position_name: assignment.positionName, person_name: assignment.personName })) : []);
 							if (rows.length) { const { data, error } = await supabase.from('draft_assignments').insert(rows).select('id,planning_center_plan_id,planning_center_person_id,planning_center_team_id,position_name,person_name,planning_center_plan_person_id,published_at'); if (error) throw error; draftRows = data as DraftRow[]; } else draftRows = [];
 							renderSchedule(); const unfilled = renderedWeeks.reduce((sum, week) => sum + week.unfilled.length, 0); const missingPlans = renderedWeeks.filter((week) => !week.planId).length;
-							message.textContent = `${draftRows.length} placeholder${draftRows.length === 1 ? '' : 's'} suggested across ${renderedWeeks.length} weekly band${renderedWeeks.length === 1 ? '' : 's'}.${unfilled ? ` ${unfilled} position${unfilled === 1 ? '' : 's'} could not be filled.` : ''}${missingPlans ? ` ${missingPlans} week${missingPlans === 1 ? '' : 's'} has no matching Planning Center plan.` : ''}`;
+							const existingCount = renderedWeeks.reduce((sum, week) => sum + week.existing.length, 0);
+							message.textContent = `${existingCount} existing Planning Center assignment${existingCount === 1 ? '' : 's'} found. ${draftRows.length} placeholder${draftRows.length === 1 ? '' : 's'} suggested to fill the remaining gaps across ${renderedWeeks.length} weekly band${renderedWeeks.length === 1 ? '' : 's'}.${unfilled ? ` ${unfilled} position${unfilled === 1 ? '' : 's'} could not be filled.` : ''}${missingPlans ? ` ${missingPlans} week${missingPlans === 1 ? '' : 's'} has no matching Planning Center plan.` : ''}`;
 						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not generate suggestions.'; }
 						finally { generateButton.disabled = false; }
 					});

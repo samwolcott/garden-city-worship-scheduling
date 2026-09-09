@@ -13,6 +13,7 @@ export interface Candidate {
 export interface Slot { positionId: string; positionName: string; }
 export interface SuggestedAssignment extends Slot { personId: string; personName: string; tier: SkillLevel; }
 export interface WeekSuggestion { date: string; assignments: SuggestedAssignment[]; unfilled: Slot[]; }
+export interface ExistingAssignment { personId: string; tier: SkillLevel | null; }
 
 const preferenceGap = (preference = '') => {
 	const value = preference.toLowerCase();
@@ -21,20 +22,25 @@ const preferenceGap = (preference = '') => {
 	return 0;
 };
 
-export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, candidates: Candidate[], pairRules: RequiredPairRule[]): WeekSuggestion[] {
+export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, candidates: Candidate[], pairRules: RequiredPairRule[], existingByDate = new Map<string, ExistingAssignment[]>()): WeekSuggestion[] {
 	const eligible = new Map(candidates.filter((person) => isEligibleForScheduling(person)).map((person) => [person.id, person]));
 	const history = new Map<string, string[]>();
 	const results: WeekSuggestion[] = [];
 	for (const date of [...dates].sort()) {
 		const open = [...(slotsByDate.get(date) ?? [])];
 		const assignments: SuggestedAssignment[] = [];
-		const scheduled = new Set<string>();
+		const existing = existingByDate.get(date) ?? [];
+		const scheduled = new Set(existing.map((assignment) => assignment.personId));
 		const tierCounts = new Map<SkillLevel, number>([['A', 0], ['B', 0], ['C', 0]]);
+		for (const assignment of existing) {
+			history.set(assignment.personId, [...(history.get(assignment.personId) ?? []), date]);
+			if (assignment.tier) tierCounts.set(assignment.tier, (tierCounts.get(assignment.tier) ?? 0) + 1);
+		}
 		while (open.length) {
 			let best: { people: Candidate[]; slotIndexes: number[]; score: number } | undefined;
 			for (const person of eligible.values()) {
 				if (scheduled.has(person.id) || person.blockedDates.includes(date)) continue;
-				const groupIds = [...requiredGroupFor(person.id, pairRules)];
+				const groupIds = [...requiredGroupFor(person.id, pairRules)].filter((id) => !scheduled.has(id));
 				const group = groupIds.map((id) => eligible.get(id));
 				if (group.some((member) => !member || member.blockedDates.includes(date) || scheduled.has(member.id))) continue;
 				const slotIndexes: number[] = [];
