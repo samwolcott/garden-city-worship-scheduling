@@ -1,0 +1,184 @@
+---
+import '../styles/global.css';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<link rel="icon" type="image/svg+xml" href={`${base}/favicon.svg`} />
+		<title>Schedule | Garden City Worship Scheduler</title>
+	</head>
+	<body>
+		<header class="site-header">
+			<a class="brand" href={`${base}/`}>Garden City <span>Worship Scheduler</span></a>
+			<nav><a href={`${base}/people/`}>People</a><a href={`${base}/bands/`}>Weekly bands</a><a aria-current="page" href={`${base}/schedule/`}>Schedule</a></nav>
+		</header>
+		<main class="people-page">
+			<section class="page-heading">
+				<div><p class="eyebrow">Schedule builder</p><h1>Suggestions</h1><p class="lede">Build a balanced rotation, review it, then add unconfirmed placeholders to existing Planning Center plans.</p></div>
+			</section>
+			<section class="toolbar schedule-toolbar" aria-label="Schedule range">
+				<label>From<input id="starts-on" type="date" /></label>
+				<label>Through<input id="ends-on" type="date" /></label>
+				<button id="generate" type="button">Suggest bands</button>
+			</section>
+			<p id="schedule-message" class="notice" role="status">Choose a range containing configured weekly bands.</p>
+			<section id="schedule-results" class="schedule-results" hidden></section>
+			<div id="publish-bar" class="publish-bar" hidden>
+				<div><strong>Ready when you are</strong><span>People are added as unconfirmed placeholders. No invitations or notifications are prepared or sent.</span></div>
+				<button id="publish" type="button">Add placeholders to Planning Center</button>
+			</div>
+		</main>
+
+		<script>
+			import { getSupabase, supabaseConfigured } from '../lib/supabase';
+			import { suggestWeeks, type Candidate, type Slot, type WeekSuggestion } from '../lib/scheduler/generate';
+			type Resource = { id: string; attributes: Record<string, any>; relationships?: Record<string, { data?: { id?: string } }> };
+			type Requirement = { service_date: string; planning_center_team_id: string; planning_center_team_position_id: string; position_name: string; required_count: number };
+			type Setting = { planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null };
+			type Pair = { person_one_id: string; person_two_id: string };
+			type DraftRow = { id: string; planning_center_plan_id: string; planning_center_person_id: string; planning_center_team_id: string; position_name: string; person_name: string; planning_center_plan_person_id: string | null; published_at: string | null };
+			type RenderedWeek = WeekSuggestion & { teamId: string; teamName: string; planId?: string; planUrl?: string };
+
+			const startsOn = document.querySelector<HTMLInputElement>('#starts-on')!;
+			const endsOn = document.querySelector<HTMLInputElement>('#ends-on')!;
+			const generateButton = document.querySelector<HTMLButtonElement>('#generate')!;
+			const publishButton = document.querySelector<HTMLButtonElement>('#publish')!;
+			const message = document.querySelector<HTMLParagraphElement>('#schedule-message')!;
+			const results = document.querySelector<HTMLElement>('#schedule-results')!;
+			const publishBar = document.querySelector<HTMLElement>('#publish-bar')!;
+			const today = new Date();
+			const eightWeeks = new Date(today); eightWeeks.setDate(eightWeeks.getDate() + 56);
+			startsOn.value = today.toLocaleDateString('en-CA'); endsOn.value = eightWeeks.toLocaleDateString('en-CA');
+
+			if (!supabaseConfigured) message.textContent = 'Supabase is not configured yet.';
+			else {
+				const supabase = getSupabase();
+				const { data: { session } } = await supabase.auth.getSession();
+				if (!session) message.textContent = 'Sign in from the home page to build schedules.';
+				else {
+					let draftId = '';
+					let draftRows: DraftRow[] = [];
+					let renderedWeeks: RenderedWeek[] = [];
+					let teamServiceTypes = new Map<string, string>();
+					const callPco = async (path: string, method = 'GET', body?: Record<string, unknown>) => {
+						const { data, error } = await supabase.functions.invoke('planning-center', { body: { method, path, body } });
+						if (!error) return data;
+						const response = 'context' in error && error.context instanceof Response ? error.context : undefined;
+						let detail = error.message;
+						if (response) {
+							try { const payload = await response.clone().json(); detail = payload.error ?? payload.message ?? payload.errors?.[0]?.detail ?? detail; }
+							catch { const text = await response.clone().text(); if (text) detail = text; }
+							throw new Error(`Planning Center request failed (${response.status}): ${detail}`);
+						}
+						throw new Error(`Could not reach the scheduling service: ${detail}`);
+					};
+					const fetchAll = async <T,>(path: string): Promise<T[]> => {
+						const records: T[] = [];
+						for (let page = 0; path && page < 20; page++) {
+							const payload = await callPco(path); records.push(...(payload.data ?? []));
+							path = payload.links?.next ? new URL(payload.links.next).pathname + new URL(payload.links.next).search : '';
+						}
+						return records;
+					};
+					const nameOf = (person: Resource) => person.attributes.name ?? `${person.attributes.first_name ?? ''} ${person.attributes.last_name ?? ''}`.trim();
+					const blockedDates = (blocks: Resource[], dates: string[]) => dates.filter((date) => blocks.some((block) => {
+						const start = String(block.attributes.starts_at ?? '').slice(0, 10); const end = String(block.attributes.ends_at ?? start).slice(0, 10);
+						return start && date >= start && date <= end;
+					}));
+					const renderSchedule = () => {
+						results.replaceChildren();
+						for (const week of renderedWeeks) {
+							const card = document.createElement('article'); card.className = 'week-card';
+							const heading = document.createElement('div'); heading.className = 'week-heading';
+							const title = document.createElement('div'); title.innerHTML = `<p>${new Date(`${week.date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h2>${week.teamName}</h2>`;
+							const plan = document.createElement(week.planUrl ? 'a' : 'span'); plan.textContent = week.planId ? 'Planning Center plan found' : 'No matching plan'; if (week.planUrl) { (plan as HTMLAnchorElement).href = week.planUrl; (plan as HTMLAnchorElement).target = '_blank'; }
+							heading.append(title, plan); card.append(heading);
+							const list = document.createElement('ul'); list.className = 'assignment-list';
+							for (const assignment of week.assignments) { const item = document.createElement('li'); item.innerHTML = `<span><strong>${assignment.positionName}</strong>${assignment.personName}</span><span class="tier-chip">Tier ${assignment.tier}</span>`; list.append(item); }
+							for (const slot of week.unfilled) { const item = document.createElement('li'); item.className = 'unfilled'; item.innerHTML = `<span><strong>${slot.positionName}</strong>No eligible, available musician</span><span>Unfilled</span>`; list.append(item); }
+							card.append(list); results.append(card);
+						}
+						results.hidden = false; publishBar.hidden = !draftRows.length;
+					};
+
+					generateButton.addEventListener('click', async () => {
+						if (!startsOn.value || !endsOn.value || endsOn.value < startsOn.value) { message.textContent = 'Choose a valid date range.'; return; }
+						generateButton.disabled = true; publishBar.hidden = true; results.hidden = true; message.classList.remove('error-notice'); message.textContent = 'Reading requirements, availability, and Planning Center plans…';
+						try {
+							const [requirementsResult, settingsResult, pairsResult, teams] = await Promise.all([
+								supabase.from('weekly_instrument_requirements').select('service_date,planning_center_team_id,planning_center_team_position_id,position_name,required_count').gte('service_date', startsOn.value).lte('service_date', endsOn.value).order('service_date'),
+								supabase.from('member_settings').select('planning_center_person_id,active,skill_level'),
+								supabase.from('required_pair_rules').select('person_one_id,person_two_id'),
+								fetchAll<Resource>('/services/v2/teams?per_page=100'),
+							]);
+							if (requirementsResult.error) throw requirementsResult.error; if (settingsResult.error) throw settingsResult.error; if (pairsResult.error) throw pairsResult.error;
+							const requirements = (requirementsResult.data ?? []) as Requirement[];
+							if (!requirements.length) throw new Error('No weekly instrument requirements are configured in this range. Add them on Weekly bands first.');
+							const settings = new Map(((settingsResult.data ?? []) as Setting[]).map((item) => [item.planning_center_person_id, item]));
+							const pairs = (pairsResult.data ?? []) as Pair[];
+							const teamNames = new Map(teams.map((team) => [team.id, String(team.attributes.name ?? `Team ${team.id}`)]));
+							teamServiceTypes = new Map(teams.map((team): [string, string] => [team.id, team.relationships?.service_type?.data?.id ?? '']).filter((entry) => entry[1]));
+							const teamIds = [...new Set(requirements.map((item) => item.planning_center_team_id))]; renderedWeeks = [];
+							for (const teamId of teamIds) {
+								const teamRequirements = requirements.filter((item) => item.planning_center_team_id === teamId);
+								const dates = [...new Set(teamRequirements.map((item) => item.service_date))];
+								const [people, assignments] = await Promise.all([
+									fetchAll<Resource>(`/services/v2/teams/${encodeURIComponent(teamId)}/people?per_page=100`),
+									fetchAll<Resource>(`/services/v2/teams/${encodeURIComponent(teamId)}/person_team_position_assignments?per_page=100`),
+								]);
+								const positionIds = new Map<string, string[]>();
+								for (const assignment of assignments) { const personId = assignment.relationships?.person?.data?.id; const positionId = assignment.relationships?.team_position?.data?.id; if (personId && positionId) positionIds.set(personId, [...(positionIds.get(personId) ?? []), positionId]); }
+								const eligiblePeople = people.filter((person) => settings.get(person.id)?.active && settings.get(person.id)?.skill_level);
+								const availability = await Promise.all(eligiblePeople.map(async (person) => {
+									const [blocks, preferences] = await Promise.all([fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts?filter=future&per_page=100`), fetchAll<Resource>(`/services/v2/people/${person.id}/scheduling_preferences?per_page=100`)]);
+									const setting = settings.get(person.id)!; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], blockedDates: blockedDates(blocks, dates), preference: preferences[0]?.attributes.preference } as Candidate;
+								}));
+								const slotsByDate = new Map<string, Slot[]>();
+								for (const requirement of teamRequirements) { const slots = slotsByDate.get(requirement.service_date) ?? []; for (let i = 0; i < requirement.required_count; i++) slots.push({ positionId: requirement.planning_center_team_position_id, positionName: requirement.position_name }); slotsByDate.set(requirement.service_date, slots); }
+								const serviceTypeId = teamServiceTypes.get(teamId); if (!serviceTypeId) throw new Error(`Could not identify the Planning Center service type for ${teamNames.get(teamId)}.`);
+								const plans = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans?filter=future&order=sort_date&per_page=100`);
+								const plansByDate = new Map(plans.map((plan) => [String(plan.attributes.sort_date ?? '').slice(0, 10), plan]));
+								for (const week of suggestWeeks(dates, slotsByDate, availability, pairs)) { const plan = plansByDate.get(week.date); renderedWeeks.push({ ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url }); }
+							}
+							renderedWeeks.sort((a, b) => a.date.localeCompare(b.date));
+							const { data: draft, error: draftError } = await supabase.from('schedule_drafts').insert({ owner_id: session.user.id, name: `Band suggestions ${startsOn.value}–${endsOn.value}`, starts_on: startsOn.value, ends_on: endsOn.value }).select('id').single();
+							if (draftError) throw draftError; draftId = draft.id;
+							const rows = renderedWeeks.flatMap((week) => week.planId ? week.assignments.map((assignment) => ({ owner_id: session.user.id, draft_id: draftId, planning_center_plan_id: week.planId!, planning_center_person_id: assignment.personId, planning_center_team_id: week.teamId, position_name: assignment.positionName, person_name: assignment.personName })) : []);
+							if (rows.length) { const { data, error } = await supabase.from('draft_assignments').insert(rows).select('id,planning_center_plan_id,planning_center_person_id,planning_center_team_id,position_name,person_name,planning_center_plan_person_id,published_at'); if (error) throw error; draftRows = data as DraftRow[]; } else draftRows = [];
+							renderSchedule(); const unfilled = renderedWeeks.reduce((sum, week) => sum + week.unfilled.length, 0); const missingPlans = renderedWeeks.filter((week) => !week.planId).length;
+							message.textContent = `${draftRows.length} placeholder${draftRows.length === 1 ? '' : 's'} suggested across ${renderedWeeks.length} weekly band${renderedWeeks.length === 1 ? '' : 's'}.${unfilled ? ` ${unfilled} position${unfilled === 1 ? '' : 's'} could not be filled.` : ''}${missingPlans ? ` ${missingPlans} week${missingPlans === 1 ? '' : 's'} has no matching Planning Center plan.` : ''}`;
+						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not generate suggestions.'; }
+						finally { generateButton.disabled = false; }
+					});
+
+					publishButton.addEventListener('click', async () => {
+						const pending = draftRows.filter((row) => !row.published_at); if (!pending.length) return;
+						publishButton.disabled = true; generateButton.disabled = true; message.classList.remove('error-notice'); message.textContent = `Checking ${pending.length} assignment${pending.length === 1 ? '' : 's'} and adding placeholders…`;
+						let added = 0; let existing = 0;
+						try {
+							for (const row of pending) {
+								const serviceTypeId = teamServiceTypes.get(row.planning_center_team_id); if (!serviceTypeId) throw new Error('A Planning Center service type is missing. Generate the schedule again.');
+								const path = `/services/v2/service_types/${serviceTypeId}/plans/${row.planning_center_plan_id}/team_members`;
+								const current = await fetchAll<Resource>(`${path}?where[team_id]=${encodeURIComponent(row.planning_center_team_id)}&per_page=100`);
+								const found = current.find((item) => item.relationships?.person?.data?.id === row.planning_center_person_id && item.relationships?.team?.data?.id === row.planning_center_team_id && item.attributes.team_position_name === row.position_name);
+								let planPersonId = found?.id;
+								if (found) existing++; else {
+									const response = await callPco(path, 'POST', { data: { type: 'PlanPerson', attributes: { person_id: row.planning_center_person_id, team_id: row.planning_center_team_id, team_position_name: row.position_name, status: 'Unconfirmed', prepare_notification: false } } });
+									planPersonId = response.data?.id; added++;
+								}
+								const now = new Date().toISOString(); const { error } = await supabase.from('draft_assignments').update({ planning_center_plan_person_id: planPersonId ?? null, published_at: now }).eq('id', row.id); if (error) throw error; row.published_at = now;
+							}
+							await supabase.from('schedule_drafts').update({ status: 'published', updated_at: new Date().toISOString() }).eq('id', draftId);
+							message.textContent = `${added} placeholder${added === 1 ? '' : 's'} added to Planning Center without invitations.${existing ? ` ${existing} existing assignment${existing === 1 ? ' was' : 's were'} left unchanged.` : ''}`; publishButton.textContent = 'Added to Planning Center';
+						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not add all placeholders.'; publishButton.disabled = false; }
+						finally { generateButton.disabled = false; }
+					});
+				}
+			}
+		</script>
+	</body>
+</html>
