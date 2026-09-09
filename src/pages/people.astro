@@ -181,13 +181,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					});
 
 					try {
-						let [teams, serviceTypes] = await Promise.all([fetchAll<PcoTeam>('/services/v2/teams?per_page=100'), fetchAll<PcoServiceType>('/services/v2/service_types?per_page=100')]);
-						if (!teams.length) {
-							const nestedTeams = await Promise.all(serviceTypes.map((serviceType) => fetchAll<PcoTeam>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)));
-							teams = [...new Map(nestedTeams.flat().map((team) => [team.id, team])).values()];
-						}
-						const activeServiceTypeIds = new Set(serviceTypes.filter((serviceType) => !serviceType.attributes.archived_at && !serviceType.attributes.deleted_at).map((serviceType) => serviceType.id));
-						teams = teams.filter((team) => { const serviceTypeId = team.relationships?.service_type?.data?.id; return !team.attributes.archived_at && !team.attributes.deleted_at && (!serviceTypeId || activeServiceTypeIds.has(serviceTypeId)); });
+						const serviceTypes = (await fetchAll<PcoServiceType>('/services/v2/service_types?per_page=100')).filter((serviceType) => !serviceType.attributes.archived_at && !serviceType.attributes.deleted_at);
+						const nestedTeams = await Promise.all(serviceTypes.map((serviceType) => fetchAll<PcoTeam>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)));
+						const teams = [...new Map(nestedTeams.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at).map((team) => [team.id, team])).values()];
 						teamSelect.replaceChildren(new Option('Choose a team', ''));
 						for (const team of teams) teamSelect.add(new Option(team.attributes.name ?? `Team ${team.id}`, team.id));
 						teamSelect.disabled = !teams.length;
