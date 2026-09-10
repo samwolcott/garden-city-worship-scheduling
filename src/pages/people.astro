@@ -36,7 +36,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			<p id="people-message" class="notice" role="status">Connecting to Planning Center…</p>
 			<div class="table-wrap" hidden>
 				<table>
-					<thead><tr><th id="musician-heading" aria-sort="ascending"><button class="sort-button" id="sort-musician" type="button">Musician <span aria-hidden="true">↑</span></button></th><th id="instrument-heading" aria-sort="none"><button class="sort-button" id="sort-instrument" type="button">Instrument <span aria-hidden="true">↕</span></button></th><th>Status</th><th>Band tier</th><th>Serving frequency</th><th>Every Sunday</th><th>Save state</th></tr></thead>
+					<thead><tr><th id="musician-heading" aria-sort="ascending"><button class="sort-button" id="sort-musician" type="button">Musician <span aria-hidden="true">↑</span></button></th><th id="instrument-heading" aria-sort="none"><button class="sort-button" id="sort-instrument" type="button">Instrument <span aria-hidden="true">↕</span></button></th><th>Status</th><th>Band tier</th><th>Serving frequency</th><th>Save state</th></tr></thead>
 					<tbody id="people-list"></tbody>
 				</table>
 			</div>
@@ -61,7 +61,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			type PcoServiceType = { id: string; attributes: { name?: string; archived_at?: string | null; deleted_at?: string | null } };
 			type PcoPosition = { id: string; attributes: { name?: string } };
 			type PcoPositionAssignment = { id: string; relationships?: { person?: { data?: { id?: string } }; team_position?: { data?: { id?: string } } } };
-			type Setting = { owner_id: string; planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null; schedule_every_sunday: boolean; minimum_weeks_between: number };
+			type Setting = { owner_id: string; planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null; minimum_weeks_between: number };
 			type PairRule = { id: string; owner_id: string; person_one_id: string; person_two_id: string };
 			type TeamSetting = { owner_id: string; planning_center_team_id: string; visible: boolean };
 
@@ -158,7 +158,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						});
 						for (const person of sortedPeople) {
 							const name = person.attributes.name ?? `${person.attributes.first_name ?? ''} ${person.attributes.last_name ?? ''}`.trim();
-							const saved = settings.get(person.id) ?? { owner_id: session.user.id, planning_center_person_id: person.id, active: false, skill_level: null, schedule_every_sunday: false, minimum_weeks_between: 2 };
+							const saved = settings.get(person.id) ?? { owner_id: session.user.id, planning_center_person_id: person.id, active: false, skill_level: null, minimum_weeks_between: 2 };
 							if (!name.toLowerCase().includes(query) || (!showInactive.checked && !saved.active)) continue;
 							const row = document.createElement('tr');
 							const nameCell = document.createElement('td'); nameCell.textContent = name;
@@ -189,19 +189,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							const tier = document.createElement('select'); tier.setAttribute('aria-label', `Band tier for ${name}`);
 							for (const [value, label] of [['', 'Not assigned'], ['A', 'A'], ['B', 'B'], ['C', 'C']]) tier.add(new Option(label, value, false, value === (saved.skill_level ?? '')));
 							tierCell.append(tier);
-							const frequencyCell = document.createElement('td'); const frequency = document.createElement('select'); frequency.setAttribute('aria-label', `Serving frequency for ${name}`); for (const [weeks, label] of [[2, 'Every 2 weeks'], [3, 'Every 3 weeks'], [4, 'Every 4 weeks'], [5, 'Every 5 weeks'], [6, 'Every 6 weeks'], [8, 'Every 8 weeks'], [13, 'Quarterly']]) frequency.add(new Option(String(label), String(weeks), false, Number(weeks) === saved.minimum_weeks_between)); frequencyCell.append(frequency);
-							const weeklyCell = document.createElement('td'); let scheduleEverySunday = saved.schedule_every_sunday; const weeklyButton = document.createElement('button'); weeklyButton.type = 'button'; const updateWeeklyButton = () => { weeklyButton.textContent = scheduleEverySunday ? 'Every Sunday' : 'Rotation'; weeklyButton.className = `weekly-toggle ${scheduleEverySunday ? 'is-weekly' : ''}`; weeklyButton.setAttribute('aria-pressed', String(scheduleEverySunday)); weeklyButton.setAttribute('aria-label', `${name}: ${scheduleEverySunday ? 'schedule every Sunday' : 'normal rotation'}. Click to change.`); }; updateWeeklyButton(); weeklyCell.append(weeklyButton);
+							const frequencyCell = document.createElement('td'); const frequency = document.createElement('select'); frequency.setAttribute('aria-label', `Serving frequency for ${name}`); for (const [weeks, label] of [[1, 'Every week'], [2, 'Every 2 weeks'], [3, 'Every 3 weeks'], [4, 'Every 4 weeks'], [5, 'Every 5 weeks'], [6, 'Every 6 weeks'], [8, 'Every 8 weeks'], [13, 'Quarterly']]) frequency.add(new Option(String(label), String(weeks), false, Number(weeks) === saved.minimum_weeks_between)); frequencyCell.append(frequency);
 							const stateCell = document.createElement('td'); stateCell.className = 'save-state'; stateCell.textContent = saved.active ? (saved.skill_level ? 'Eligible' : 'Needs band tier') : 'Excluded';
 							const save = async () => {
 								stateCell.textContent = 'Saving…';
-								const next: Setting = { owner_id: saved.owner_id, planning_center_person_id: person.id, active: isActive, skill_level: (tier.value || null) as Setting['skill_level'], schedule_every_sunday: scheduleEverySunday, minimum_weeks_between: Number(frequency.value) || 2 };
+								const next: Setting = { owner_id: saved.owner_id, planning_center_person_id: person.id, active: isActive, skill_level: (tier.value || null) as Setting['skill_level'], minimum_weeks_between: Number(frequency.value) || 2 };
 								const { error } = await supabase.from('member_settings').upsert(next, { onConflict: 'owner_id,planning_center_person_id' });
 								if (error) { stateCell.textContent = error.message; return false; }
 								settings.set(person.id, next); stateCell.textContent = next.active ? (next.skill_level ? 'Eligible' : 'Needs band tier') : 'Excluded'; render(); return true;
 							};
 							statusButton.addEventListener('click', async () => { const previous = isActive; isActive = !isActive; updateStatusButton(); statusButton.disabled = true; if (!(await save())) { isActive = previous; updateStatusButton(); statusButton.disabled = false; } }); tier.addEventListener('change', save); frequency.addEventListener('change', save);
-							weeklyButton.addEventListener('click', async () => { const previous = scheduleEverySunday; scheduleEverySunday = !scheduleEverySunday; updateWeeklyButton(); weeklyButton.disabled = true; if (!(await save())) { scheduleEverySunday = previous; updateWeeklyButton(); weeklyButton.disabled = false; } });
-							row.append(nameCell, instrumentCell, statusCell, tierCell, frequencyCell, weeklyCell, stateCell); tbody.append(row);
+							row.append(nameCell, instrumentCell, statusCell, tierCell, frequencyCell, stateCell); tbody.append(row);
 						}
 					};
 					const setSort = (column: 'musician' | 'instrument') => {
@@ -265,7 +263,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								fetchAll<PcoPerson>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/people?per_page=100`),
 								fetchAll<PcoPosition>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/team_positions?per_page=100`),
 								fetchAll<PcoPositionAssignment>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/person_team_position_assignments?per_page=100`),
-								supabase.from('member_settings').select('owner_id,planning_center_person_id,active,skill_level,schedule_every_sunday,minimum_weeks_between'),
+								supabase.from('member_settings').select('owner_id,planning_center_person_id,active,skill_level,minimum_weeks_between'),
 								supabase.from('required_pair_rules').select('id,owner_id,person_one_id,person_two_id').order('created_at'),
 							]);
 							if (saved.error) throw saved.error;
