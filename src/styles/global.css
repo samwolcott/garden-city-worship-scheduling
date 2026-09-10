@@ -105,11 +105,14 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .week-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.2rem; border-bottom: 1px solid #e7e1d5; }
 .week-heading p { margin: 0 0 .2rem; color: #b55f37; font-size: .75rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
 .week-heading h2 { margin: 0; font-size: 1.2rem; }
-.week-heading > a, .week-heading > span { color: #567069; font-size: .8rem; }
+.week-heading > a, .week-heading > span, .week-heading-actions > a, .week-heading-actions > span { color: #567069; font-size: .8rem; }
+.week-heading-actions { display: flex; align-items: center; justify-content: end; gap: .75rem; }
+.publish-week-button, .publish-row-button { padding: .4rem .6rem; font-size: .72rem; white-space: nowrap; }
+.published-chip { color: var(--garden); font-size: .72rem; font-weight: 750; text-transform: uppercase; letter-spacing: .05em; }
 .assignment-list { margin: 0; padding: 0; list-style: none; }
-.assignment-list li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem 1.2rem; border-bottom: 1px solid #eee8dd; }
+.assignment-list li { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(260px, 1fr) minmax(110px, auto); align-items: center; gap: 1rem; padding: .85rem 1.2rem; border-bottom: 1px solid #eee8dd; }
 .assignment-list li:last-child { border-bottom: 0; }
-.assignment-list li > span:first-child { display: grid; grid-template-columns: minmax(130px, .7fr) 1fr; flex: 1; gap: 1rem; }
+.assignment-list li > span:first-child { display: contents; }
 .assignment-list .unfilled { color: #842f22; background: #fff7f4; }
 .tier-chip { padding: .25rem .5rem; color: #39554d; background: #e7efec; border-radius: 999px; font-size: .72rem; font-weight: 750; }
 .person-with-reason { display: inline-flex; align-items: center; gap: .4rem; }
@@ -136,7 +139,7 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .publish-bar span { color: #c8d5d1; font-size: .82rem; }
 .publish-bar button { color: #17332c; background: #fffdf7; }
 /* Garden City brand treatment */
-.lede, .notice, .status, .features p, .panel p, .save-state, .week-heading > a, .week-heading > span { color: var(--muted); }
+.lede, .notice, .status, .features p, .panel p, .save-state, .week-heading > a, .week-heading > span, .week-heading-actions > a, .week-heading-actions > span { color: var(--muted); }
 .panel, .toolbar, .table-wrap, .pairing-panel, .week-card { background: var(--surface); border-color: var(--line); border-radius: 2px; box-shadow: none; }
 button, .button-link { background: var(--garden); border-radius: 2px; letter-spacing: .02em; }
 button:hover, .button-link:hover { background: #356b49; }
@@ -161,7 +164,9 @@ th { color: var(--garden); }
 	.schedule-toolbar { grid-template-columns: 1fr; }
 	.rules-grid { grid-template-columns: 1fr; gap: 1.25rem; }
 	.week-heading, .publish-bar { align-items: stretch; flex-direction: column; }
-	.assignment-list li > span:first-child { grid-template-columns: 1fr; gap: .15rem; }
+	.week-heading-actions { align-items: stretch; flex-direction: column; }
+	.assignment-list li { grid-template-columns: 1fr; gap: .35rem; }
+	.assignment-list li > span:first-child { display: grid; grid-template-columns: 1fr; gap: .15rem; }
 	.assignment-actions, .swap-editor { align-items: stretch; flex-direction: column; }
 	.team-visibility-list { grid-template-columns: 1fr; }
 }

@@ -37,8 +37,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						<p class="rule-kind">Balanced when possible</p>
 						<h2>Rotation &amp; band mix</h2>
 						<ul>
-							<li>Existing Confirmed Planning Center assignments fill their matching positions first.</li>
-							<li>Unconfirmed and Declined assignments remain visible, but their positions stay open for replacement suggestions.</li>
+							<li>Existing Confirmed and Unconfirmed Planning Center assignments fill their matching positions first.</li>
+							<li>Declined assignments remain visible, and their positions stay open for replacement suggestions.</li>
 							<li>Prior confirmed and unconfirmed Planning Center assignments—including placeholders—are included in the lookback.</li>
 							<li>People with fewer assignments in this suggested range are favored.</li>
 							<li>Each musician’s private serving frequency is enforced, defaulting to every two weeks and supporting quarterly rotation.</li>
@@ -145,16 +145,38 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						return start && date >= start && date <= end;
 					}));
 					const planStatus = (status: unknown): ExistingPlanAssignment['status'] => { const value = String(status ?? '').toLowerCase(); if (value === 'c' || value === 'confirmed') return 'Confirmed'; if (value === 'd' || value === 'declined') return 'Declined'; return 'Unconfirmed'; };
+					const publishRows = async (rows: DraftRow[], trigger: HTMLButtonElement) => {
+						const pending = rows.filter((row) => !row.published_at).sort((a, b) => Number(b.position_name.toLowerCase().includes('worship leader')) - Number(a.position_name.toLowerCase().includes('worship leader'))); if (!pending.length) return;
+						trigger.disabled = true; generateButton.disabled = true; message.classList.remove('error-notice'); message.textContent = `Checking ${pending.length} assignment${pending.length === 1 ? '' : 's'} and adding placeholder${pending.length === 1 ? '' : 's'}…`;
+						let added = 0; let existing = 0;
+						try {
+							for (const row of pending) {
+								const publishedRole = draftRows.find((item) => item !== row && item.planning_center_plan_id === row.planning_center_plan_id && item.planning_center_person_id === row.planning_center_person_id && item.planning_center_team_id === row.planning_center_team_id && item.published_at);
+								if (publishedRole) { const now = new Date().toISOString(); const { error } = await supabase.from('draft_assignments').update({ planning_center_plan_person_id: publishedRole.planning_center_plan_person_id, published_at: now }).eq('id', row.id); if (error) throw error; row.planning_center_plan_person_id = publishedRole.planning_center_plan_person_id; row.published_at = now; continue; }
+								const serviceTypeId = teamServiceTypes.get(row.planning_center_team_id); if (!serviceTypeId) throw new Error('A Planning Center service type is missing. Generate the schedule again.');
+								const path = `/services/v2/service_types/${serviceTypeId}/plans/${row.planning_center_plan_id}/team_members`;
+								const current = await fetchAll<Resource>(`${path}?where[team_id]=${encodeURIComponent(row.planning_center_team_id)}&per_page=100`);
+								const found = current.find((item) => item.relationships?.person?.data?.id === row.planning_center_person_id && item.relationships?.team?.data?.id === row.planning_center_team_id && item.attributes.team_position_name === row.position_name);
+								let planPersonId = found?.id;
+								if (found) existing++; else { const response = await callPco(path, 'POST', { data: { type: 'PlanPerson', attributes: { person_id: row.planning_center_person_id, team_id: row.planning_center_team_id, team_position_name: row.position_name, status: 'Unconfirmed', prepare_notification: false } } }); planPersonId = response.data?.id; added++; }
+								const now = new Date().toISOString(); const { error } = await supabase.from('draft_assignments').update({ planning_center_plan_person_id: planPersonId ?? null, published_at: now }).eq('id', row.id); if (error) throw error; row.planning_center_plan_person_id = planPersonId ?? null; row.published_at = now;
+							}
+							if (draftRows.every((row) => row.published_at)) await supabase.from('schedule_drafts').update({ status: 'published', updated_at: new Date().toISOString() }).eq('id', draftId);
+							message.textContent = `${added} placeholder${added === 1 ? '' : 's'} added to Planning Center without invitations.${existing ? ` ${existing} existing assignment${existing === 1 ? ' was' : 's were'} left unchanged.` : ''}`; renderSchedule();
+						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not add the selected placeholders.'; trigger.disabled = false; }
+						finally { generateButton.disabled = false; }
+					};
 					const renderSchedule = () => {
 						results.replaceChildren();
 						for (const week of renderedWeeks) {
 							const card = document.createElement('article'); card.className = 'week-card';
 							const heading = document.createElement('div'); heading.className = 'week-heading';
 							const title = document.createElement('div'); title.innerHTML = `<p>${new Date(`${week.date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h2>${week.teamName}</h2>`;
-							const plan = document.createElement(week.planUrl ? 'a' : 'span'); plan.textContent = week.planId ? 'Planning Center plan found' : 'No matching plan'; if (week.planUrl) { (plan as HTMLAnchorElement).href = week.planUrl; (plan as HTMLAnchorElement).target = '_blank'; }
-							heading.append(title, plan); card.append(heading);
+							const headingActions = document.createElement('div'); headingActions.className = 'week-heading-actions'; const plan = document.createElement(week.planUrl ? 'a' : 'span'); plan.textContent = week.planId ? 'Planning Center plan found' : 'No matching plan'; if (week.planUrl) { (plan as HTMLAnchorElement).href = week.planUrl; (plan as HTMLAnchorElement).target = '_blank'; }
+							const weekRows = draftRows.filter((row) => row.planning_center_plan_id === week.planId && row.planning_center_team_id === week.teamId); const pendingWeekRows = weekRows.filter((row) => !row.published_at); headingActions.append(plan); if (pendingWeekRows.length) { const publishWeek = document.createElement('button'); publishWeek.type = 'button'; publishWeek.className = 'publish-week-button'; publishWeek.textContent = `Add ${pendingWeekRows.length} placeholder${pendingWeekRows.length === 1 ? '' : 's'}`; publishWeek.addEventListener('click', () => publishRows(weekRows, publishWeek)); headingActions.append(publishWeek); }
+							heading.append(title, headingActions); card.append(heading);
 							const list = document.createElement('ul'); list.className = 'assignment-list';
-							for (const assignment of week.existing) { const item = document.createElement('li'); item.className = `existing-assignment is-${assignment.status.toLowerCase()}`; item.innerHTML = `<span><strong>${assignment.positionName}</strong><span class="person-with-reason">${assignment.personName}<span class="reason-tooltip" tabindex="0" aria-label="Why ${assignment.personName} is here">i<span role="tooltip">Already in Planning Center with status: ${assignment.status}.${assignment.fillsRequirement ? ' This confirmed assignment fills the required position.' : ' A replacement is still being suggested for this position.'}</span></span></span></span><span class="existing-chip is-${assignment.status.toLowerCase()}">${assignment.status}</span>`; list.append(item); }
+							for (const assignment of week.existing) { const item = document.createElement('li'); item.className = `existing-assignment is-${assignment.status.toLowerCase()}`; item.innerHTML = `<span><strong>${assignment.positionName}</strong><span class="person-with-reason">${assignment.personName}<span class="reason-tooltip" tabindex="0" aria-label="Why ${assignment.personName} is here">i<span role="tooltip">Already in Planning Center with status: ${assignment.status}.${assignment.fillsRequirement ? ' This assignment fills the required position.' : ' This declined assignment is being replaced.'}</span></span></span></span><span class="existing-chip is-${assignment.status.toLowerCase()}">${assignment.status}</span>`; list.append(item); }
 							for (const assignment of week.assignments) {
 								const item = document.createElement('li'); const identity = document.createElement('span'); const position = document.createElement('strong'); position.textContent = assignment.positionName; const personLine = document.createElement('span'); personLine.className = 'person-with-reason'; personLine.append(document.createTextNode(assignment.personName));
 								const tooltip = document.createElement('span'); tooltip.className = 'reason-tooltip'; tooltip.tabIndex = 0; tooltip.setAttribute('aria-label', `Why ${assignment.personName} was suggested`); tooltip.textContent = 'i'; const tooltipBody = document.createElement('span'); tooltipBody.setAttribute('role', 'tooltip'); const reasons = document.createElement('ul'); for (const reason of assignment.reasons) { const reasonItem = document.createElement('li'); reasonItem.textContent = reason; reasons.append(reasonItem); } tooltipBody.append(reasons); tooltip.append(tooltipBody); personLine.append(tooltip); identity.append(position, personLine);
@@ -167,12 +189,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 									if (!alternatives.length) { message.textContent = `No other eligible, available ${assignment.positionName} musicians can be swapped in without breaking a scheduling rule.`; return; }
 									const editor = document.createElement('span'); editor.className = 'swap-editor'; const select = document.createElement('select'); select.setAttribute('aria-label', `Replacement for ${assignment.personName}`); select.append(new Option('Choose replacement', ''), ...alternatives.sort((a, b) => a.name.localeCompare(b.name)).map((candidate) => new Option(`${candidate.name} · Tier ${candidate.skill_level}`, candidate.id))); const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'text-button'; cancel.textContent = 'Cancel'; cancel.addEventListener('click', renderSchedule); select.addEventListener('change', async () => { if (!select.value) return; const replacement = alternatives.find((candidate) => candidate.id === select.value)!; select.disabled = true; cancel.disabled = true; const row = draftRows.find((draft) => draft.planning_center_plan_id === week.planId && draft.planning_center_team_id === week.teamId && draft.planning_center_person_id === assignment.personId && draft.position_name === assignment.positionName && !draft.published_at); if (row) { const { error } = await supabase.from('draft_assignments').update({ planning_center_person_id: replacement.id, person_name: replacement.name, manually_selected: true }).eq('id', row.id); if (error) { message.classList.add('error-notice'); message.textContent = error.message; renderSchedule(); return; } row.planning_center_person_id = replacement.id; row.person_name = replacement.name; } assignment.personId = replacement.id; assignment.personName = replacement.name; assignment.tier = replacement.skill_level!; assignment.reasons = [`Manually swapped in for ${assignment.positionName}`, `Assigned to ${assignment.positionName} in Planning Center`, 'No Planning Center blockout on this date']; message.classList.remove('error-notice'); message.textContent = `${replacement.name} replaced the original ${assignment.positionName} suggestion for ${new Date(`${week.date}T12:00:00`).toLocaleDateString()}.`; renderSchedule(); }); editor.append(select, cancel); actions.replaceChildren(editor);
 								});
-								actions.append(tier, swap); item.append(identity, actions); list.append(item);
+								const draftRow = draftRows.find((row) => row.planning_center_plan_id === week.planId && row.planning_center_team_id === week.teamId && row.planning_center_person_id === assignment.personId && row.position_name === assignment.positionName);
+								if (draftRow?.published_at) { const added = document.createElement('span'); added.className = 'published-chip'; added.textContent = 'Added'; actions.append(tier, added); }
+								else { const add = document.createElement('button'); add.type = 'button'; add.className = 'publish-row-button'; add.textContent = 'Add'; add.title = `Add ${assignment.personName} to Planning Center as an unconfirmed placeholder`; add.disabled = !draftRow; if (draftRow) add.addEventListener('click', () => publishRows([draftRow], add)); actions.append(tier, swap, add); }
+								item.append(identity, actions); list.append(item);
 							}
 							for (const slot of week.unfilled) { const item = document.createElement('li'); item.className = 'unfilled'; const identity = document.createElement('span'); const position = document.createElement('strong'); position.textContent = slot.positionName; const explanation = document.createElement('span'); explanation.className = 'person-with-reason'; explanation.append(document.createTextNode('No eligible, available musician')); const tooltip = document.createElement('span'); tooltip.className = 'reason-tooltip unfilled-tooltip'; tooltip.tabIndex = 0; tooltip.setAttribute('aria-label', `Why ${slot.positionName} is unfilled`); tooltip.textContent = 'i'; const tooltipBody = document.createElement('span'); tooltipBody.setAttribute('role', 'tooltip'); const reasons = document.createElement('ul'); for (const reason of slot.reasons) { const reasonItem = document.createElement('li'); reasonItem.textContent = reason; reasons.append(reasonItem); } tooltipBody.append(reasons); tooltip.append(tooltipBody); explanation.append(tooltip); identity.append(position, explanation); const status = document.createElement('span'); status.textContent = 'Unfilled'; item.append(identity, status); list.append(item); }
 							card.append(list); results.append(card);
 						}
-						results.hidden = false; publishBar.hidden = !draftRows.length;
+						const pendingCount = draftRows.filter((row) => !row.published_at).length; results.hidden = false; publishBar.hidden = !pendingCount; publishButton.disabled = false; publishButton.textContent = pendingCount === draftRows.length ? 'Add all placeholders to Planning Center' : `Add remaining ${pendingCount} placeholder${pendingCount === 1 ? '' : 's'}`;
 					};
 					await loadPlanDateOptions();
 
@@ -220,7 +245,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 									const existing = scheduledMembers.map((member) => {
 										const positionName = String(member.attributes.team_position_name ?? 'Team member');
 										const status = planStatus(member.attributes.status); const slotIndex = remaining.findIndex((slot) => slot.positionName.toLowerCase() === positionName.toLowerCase());
-										const matchedSlot = slotIndex >= 0 ? remaining[slotIndex] : undefined; const fillsRequirement = status === 'Confirmed' && Boolean(matchedSlot); if (fillsRequirement) remaining.splice(slotIndex, 1);
+										const matchedSlot = slotIndex >= 0 ? remaining[slotIndex] : undefined; const fillsRequirement = status !== 'Declined' && Boolean(matchedSlot); if (fillsRequirement) remaining.splice(slotIndex, 1);
 										return { personId: member.relationships?.person?.data?.id ?? '', personName: String(member.attributes.name ?? 'Scheduled musician'), positionName, status, fillsRequirement, positionId: matchedSlot?.positionId };
 									}).filter((member) => member.personId);
 									existingByDate.set(date, existing); slotsByDate.set(date, remaining);
@@ -271,30 +296,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						finally { generateButton.disabled = false; }
 					});
 
-					publishButton.addEventListener('click', async () => {
-						const pending = draftRows.filter((row) => !row.published_at).sort((a, b) => Number(b.position_name.toLowerCase().includes('worship leader')) - Number(a.position_name.toLowerCase().includes('worship leader'))); if (!pending.length) return;
-						publishButton.disabled = true; generateButton.disabled = true; message.classList.remove('error-notice'); message.textContent = `Checking ${pending.length} assignment${pending.length === 1 ? '' : 's'} and adding placeholders…`;
-						let added = 0; let existing = 0;
-						try {
-							for (const row of pending) {
-								const publishedRole = draftRows.find((item) => item !== row && item.planning_center_plan_id === row.planning_center_plan_id && item.planning_center_person_id === row.planning_center_person_id && item.planning_center_team_id === row.planning_center_team_id && item.published_at);
-								if (publishedRole) { const now = new Date().toISOString(); const { error } = await supabase.from('draft_assignments').update({ planning_center_plan_person_id: publishedRole.planning_center_plan_person_id, published_at: now }).eq('id', row.id); if (error) throw error; row.planning_center_plan_person_id = publishedRole.planning_center_plan_person_id; row.published_at = now; continue; }
-								const serviceTypeId = teamServiceTypes.get(row.planning_center_team_id); if (!serviceTypeId) throw new Error('A Planning Center service type is missing. Generate the schedule again.');
-								const path = `/services/v2/service_types/${serviceTypeId}/plans/${row.planning_center_plan_id}/team_members`;
-								const current = await fetchAll<Resource>(`${path}?where[team_id]=${encodeURIComponent(row.planning_center_team_id)}&per_page=100`);
-								const found = current.find((item) => item.relationships?.person?.data?.id === row.planning_center_person_id && item.relationships?.team?.data?.id === row.planning_center_team_id && item.attributes.team_position_name === row.position_name);
-								let planPersonId = found?.id;
-								if (found) existing++; else {
-									const response = await callPco(path, 'POST', { data: { type: 'PlanPerson', attributes: { person_id: row.planning_center_person_id, team_id: row.planning_center_team_id, team_position_name: row.position_name, status: 'Unconfirmed', prepare_notification: false } } });
-									planPersonId = response.data?.id; added++;
-								}
-								const now = new Date().toISOString(); const { error } = await supabase.from('draft_assignments').update({ planning_center_plan_person_id: planPersonId ?? null, published_at: now }).eq('id', row.id); if (error) throw error; row.published_at = now;
-							}
-							await supabase.from('schedule_drafts').update({ status: 'published', updated_at: new Date().toISOString() }).eq('id', draftId);
-							message.textContent = `${added} placeholder${added === 1 ? '' : 's'} added to Planning Center without invitations.${existing ? ` ${existing} existing assignment${existing === 1 ? ' was' : 's were'} left unchanged.` : ''}`; publishButton.textContent = 'Added to Planning Center';
-						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not add all placeholders.'; publishButton.disabled = false; }
-						finally { generateButton.disabled = false; }
-					});
+					publishButton.addEventListener('click', () => publishRows(draftRows, publishButton));
 				}
 			}
 		</script>
