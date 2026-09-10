@@ -82,6 +82,7 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .pair-list .empty-pair { color: #667871; }
 .text-button { padding: .35rem .55rem; color: #9a442b; background: transparent; }
 .bands-toolbar { grid-template-columns: 1fr 1fr; }
+.people-toolbar { grid-template-columns: 1fr auto; }
 .count-input { width: 7rem; min-width: 0; padding: .55rem; border: 1px solid #bac5c0; border-radius: 7px; background: white; }
 .team-visibility { margin: -0.25rem 0 1rem; padding: 1rem 1.2rem; background: var(--surface); border: 1px solid var(--line); }
 .team-visibility summary { color: var(--garden); cursor: pointer; font-weight: 700; }
@@ -151,6 +152,7 @@ th { color: var(--garden); }
 	.features { grid-template-columns: 1fr 1fr; }
 	.form-row { flex-direction: column; }
 	.toolbar { grid-template-columns: 1fr; }
+	.people-toolbar { grid-template-columns: 1fr; }
 	.site-header { flex-wrap: wrap; gap: .75rem; }
 	.site-header nav { order: 3; width: 100%; margin-left: 0; padding: 0; }
 	.page-heading { align-items: start; }

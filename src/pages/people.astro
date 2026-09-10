@@ -22,16 +22,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 				<div class="summary"><strong id="active-count">0</strong><span>active</span></div>
 			</section>
 
-			<section class="toolbar" aria-label="Roster controls">
-				<label>Planning Center team<select id="team-select" disabled><option>Loading teams…</option></select></label>
+			<section class="toolbar people-toolbar" aria-label="Roster controls">
+				<input id="team-select" type="hidden" />
 				<label>Search<input id="people-search" type="search" placeholder="Find a musician" /></label>
 				<label class="check-label"><input id="show-inactive" type="checkbox" checked /> Show inactive</label>
 			</section>
-			<details id="team-visibility" class="team-visibility" hidden>
-				<summary>Manage teams shown in the scheduler</summary>
-				<p>Planning Center reports all of these teams as active. Hide legacy teams here; this setting is shared across authorized users.</p>
-				<div id="team-visibility-list" class="team-visibility-list"></div>
-			</details>
 
 			<p id="people-message" class="notice" role="status">Connecting to Planning Center…</p>
 			<div class="table-wrap" hidden>
@@ -63,12 +58,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			type PcoPositionAssignment = { id: string; relationships?: { person?: { data?: { id?: string } }; team_position?: { data?: { id?: string } } } };
 			type Setting = { owner_id: string; planning_center_person_id: string; active: boolean; skill_level: 'A' | 'B' | 'C' | null; minimum_weeks_between: number };
 			type PairRule = { id: string; owner_id: string; person_one_id: string; person_two_id: string };
-			type TeamSetting = { owner_id: string; planning_center_team_id: string; visible: boolean };
 
 			const message = document.querySelector<HTMLParagraphElement>('#people-message')!;
 			const table = document.querySelector<HTMLDivElement>('.table-wrap')!;
 			const tbody = document.querySelector<HTMLTableSectionElement>('#people-list')!;
-			const teamSelect = document.querySelector<HTMLSelectElement>('#team-select')!;
+			const teamSelect = document.querySelector<HTMLInputElement>('#team-select')!;
 			const search = document.querySelector<HTMLInputElement>('#people-search')!;
 			const showInactive = document.querySelector<HTMLInputElement>('#show-inactive')!;
 			const activeCount = document.querySelector<HTMLElement>('#active-count')!;
@@ -78,8 +72,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			const pairTwo = document.querySelector<HTMLSelectElement>('#pair-two')!;
 			const pairList = document.querySelector<HTMLUListElement>('#pair-list')!;
 			const pairMessage = document.querySelector<HTMLParagraphElement>('#pair-message')!;
-			const teamVisibilityPanel = document.querySelector<HTMLDetailsElement>('#team-visibility')!;
-			const teamVisibilityList = document.querySelector<HTMLDivElement>('#team-visibility-list')!;
 			const sortMusician = document.querySelector<HTMLButtonElement>('#sort-musician')!;
 			const sortInstrument = document.querySelector<HTMLButtonElement>('#sort-instrument')!;
 			const musicianHeading = document.querySelector<HTMLTableCellElement>('#musician-heading')!;
@@ -91,7 +83,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			let assignmentsByPerson = new Map<string, PcoPositionAssignment[]>();
 			let teamPositions: PcoPosition[] = [];
 			let availableTeams: PcoTeam[] = [];
-			let teamSettings = new Map<string, TeamSetting>();
 			let sortColumn: 'musician' | 'instrument' = 'musician';
 			let sortDirection: 'ascending' | 'descending' = 'ascending';
 
@@ -131,22 +122,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						}
 						return records;
 					};
-					const populateTeamSelect = () => {
-						const selected = teamSelect.value; teamSelect.replaceChildren(new Option('Choose a team', ''));
-						for (const team of availableTeams.filter((item) => teamSettings.get(item.id)?.visible !== false)) teamSelect.add(new Option(team.attributes.name ?? `Team ${team.id}`, team.id));
-						teamSelect.disabled = teamSelect.options.length === 1; if ([...teamSelect.options].some((option) => option.value === selected)) teamSelect.value = selected;
-					};
-					const renderTeamVisibility = () => {
-						teamVisibilityList.replaceChildren();
-						for (const team of availableTeams) {
-							const saved = teamSettings.get(team.id) ?? { owner_id: session.user.id, planning_center_team_id: team.id, visible: true };
-							const label = document.createElement('label'); const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.checked = saved.visible;
-							toggle.addEventListener('change', async () => { toggle.disabled = true; const next = { ...saved, visible: toggle.checked, updated_at: new Date().toISOString() }; const { error } = await supabase.from('team_settings').upsert(next, { onConflict: 'owner_id,planning_center_team_id' }); if (error) { toggle.checked = saved.visible; message.textContent = error.message; } else { teamSettings.set(team.id, next); populateTeamSelect(); } toggle.disabled = false; });
-							label.append(toggle, document.createTextNode(team.attributes.name ?? `Team ${team.id}`)); teamVisibilityList.append(label);
-						}
-						teamVisibilityPanel.hidden = false;
-					};
-
 					const render = () => {
 						const query = search.value.toLowerCase();
 						tbody.replaceChildren();
@@ -249,15 +224,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						const nestedTeams = await Promise.all(serviceTypes.map((serviceType) => fetchAll<PcoTeam>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)));
 						availableTeams = [...new Map(nestedTeams.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at).map((team) => [team.id, team])).values()];
 						const savedTeamSettings = await supabase.from('team_settings').select('owner_id,planning_center_team_id,visible'); if (savedTeamSettings.error) throw savedTeamSettings.error;
-						teamSettings = new Map((savedTeamSettings.data ?? []).map((item) => [item.planning_center_team_id, item as TeamSetting])); populateTeamSelect(); renderTeamVisibility();
-						if (!availableTeams.length) {
+						const hiddenTeamIds = new Set((savedTeamSettings.data ?? []).filter((item) => !item.visible).map((item) => item.planning_center_team_id));
+						const scopedTeam = availableTeams.find((team) => !hiddenTeamIds.has(team.id));
+						if (!scopedTeam) {
 							message.classList.add('error-notice');
-							message.textContent = 'Planning Center connected, but this account can see 0 Services teams. Confirm that these are Personal Access Token credentials for a Planning Center user with access to Services and its teams.';
+							message.textContent = availableTeams.length ? 'No Planning Center team is enabled for the scheduler.' : 'Planning Center connected, but this account can see 0 Services teams. Confirm that these are Personal Access Token credentials for a Planning Center user with access to Services and its teams.';
 						} else {
-							const visibleCount = availableTeams.filter((team) => teamSettings.get(team.id)?.visible !== false).length; message.textContent = `${visibleCount} of ${availableTeams.length} Planning Center teams shown. Choose one to load its musicians.`;
-						}
-						teamSelect.addEventListener('change', async () => {
-							if (!teamSelect.value) return;
+							teamSelect.value = scopedTeam.id;
 							message.textContent = 'Loading musicians…'; table.hidden = true;
 							const [loadedPeople, positions, assignments, saved, savedPairs] = await Promise.all([
 								fetchAll<PcoPerson>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/people?per_page=100`),
@@ -283,8 +256,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								instrumentsByPerson.set(personId, names);
 							}
 							pairRules = (savedPairs.data ?? []) as PairRule[];
-							message.textContent = `${people.length} musicians loaded. New musicians start inactive.`; table.hidden = false; pairingPanel.hidden = false; configurePairSelectors(); renderPairs(); render();
-						});
+							message.textContent = `${people.length} musicians loaded from ${scopedTeam.attributes.name ?? 'the selected team'}. New musicians start inactive.`; table.hidden = false; pairingPanel.hidden = false; configurePairSelectors(); renderPairs(); render();
+						}
 						search.addEventListener('input', render); showInactive.addEventListener('change', render);
 					} catch (error) {
 						message.classList.add('error-notice');
