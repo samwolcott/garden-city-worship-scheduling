@@ -9,8 +9,13 @@ const publishPath = /^\/services\/v2\/service_types\/[^/?]+\/plans\/[^/?]+\/team
 const createPositionAssignmentPath = /^\/services\/v2\/service_types\/[^/?]+\/team_positions\/[^/?]+\/person_team_position_assignments$/;
 const deletePositionAssignmentPath = /^\/services\/v2\/people\/[^/?]+\/person_team_position_assignments\/[^/?]+$/;
 
+function allowedOrigins() {
+  const configured = (Deno.env.get('APP_ORIGINS') ?? Deno.env.get('APP_ORIGIN') ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
+  return new Set([...configured, 'http://localhost:4321', 'http://127.0.0.1:4321']);
+}
+
 function cors(origin: string) {
-  const allowedOrigin = Deno.env.get('APP_ORIGIN') ?? '';
+  const allowedOrigin = allowedOrigins().has(origin) ? origin : '';
   return {
     'Access-Control-Allow-Origin': origin === allowedOrigin ? origin : allowedOrigin,
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -23,7 +28,7 @@ Deno.serve(async (request) => {
   const origin = request.headers.get('origin') ?? '';
   const headers = cors(origin);
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
-  if (request.method !== 'POST' || origin !== Deno.env.get('APP_ORIGIN')) return Response.json({ error: 'Not allowed' }, { status: 403, headers });
+  if (request.method !== 'POST' || !allowedOrigins().has(origin)) return Response.json({ error: 'Not allowed' }, { status: 403, headers });
   const authorization = request.headers.get('authorization');
   if (!authorization) return Response.json({ error: 'Sign in required' }, { status: 401, headers });
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: authorization } } });

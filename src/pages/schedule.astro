@@ -231,16 +231,19 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								const serviceTypeId = teamServiceTypes.get(teamId); if (!serviceTypeId) throw new Error(`Could not identify the Planning Center service type for ${teamNames.get(teamId)}.`);
 								const [futurePlans, pastPayload] = await Promise.all([fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans?filter=future&order=sort_date&per_page=100`), callPco(`/services/v2/service_types/${serviceTypeId}/plans?filter=past&order=-sort_date&per_page=100`)]);
 								const plans = [...new Map([...(pastPayload.data ?? []), ...futurePlans].map((plan: Resource) => [plan.id, plan])).values()];
-								const plansByDate = new Map(plans.map((plan) => [String(plan.attributes.sort_date ?? '').slice(0, 10), plan]));
+								const plansByDate = new Map<string, Resource[]>();
+								for (const plan of plans) { const date = String(plan.attributes.sort_date ?? '').slice(0, 10); if (date) plansByDate.set(date, [...(plansByDate.get(date) ?? []), plan]); }
 								const planDates = [...plansByDate.keys()].filter((date) => date >= startsOn.value && date <= endsOn.value && new Date(`${date}T12:00:00`).getDay() === 0);
 								const candidateDates = new Set(teamDefaults.length ? planDates : []); for (const item of teamRequirements) candidateDates.add(item.service_date);
 								const slotsByDate = new Map<string, Slot[]>();
 								for (const date of candidateDates) { const counts = new Map(teamDefaults.map((item) => [item.planning_center_team_position_id, { name: item.position_name, count: item.required_count }])); for (const item of teamRequirements.filter((entry) => entry.service_date === date)) counts.set(item.planning_center_team_position_id, { name: item.position_name, count: item.required_count }); const slots: Slot[] = []; for (const [positionId, value] of counts) for (let i = 0; i < value.count; i++) slots.push({ positionId, positionName: value.name }); if (slots.length) slotsByDate.set(date, slots); }
 								const dates = [...slotsByDate.keys()].sort();
 								const existingByDate = new Map<string, ExistingPlanAssignment[]>();
+								const selectedPlansByDate = new Map<string, Resource>();
 								await Promise.all(dates.map(async (date) => {
-									const plan = plansByDate.get(date); if (!plan) { existingByDate.set(date, []); return; }
-									const scheduledMembers = await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans/${plan.id}/team_members?where[team_id]=${encodeURIComponent(teamId)}&per_page=100`);
+									const datePlans = plansByDate.get(date) ?? []; if (!datePlans.length) { existingByDate.set(date, []); return; }
+									const planMembers = await Promise.all(datePlans.map(async (plan) => ({ plan, members: await fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans/${plan.id}/team_members?where[team_id]=${encodeURIComponent(teamId)}&per_page=100`) })));
+									const selected = planMembers.sort((a, b) => b.members.length - a.members.length)[0]; const plan = selected.plan; const scheduledMembers = selected.members; selectedPlansByDate.set(date, plan);
 									const remaining = [...(slotsByDate.get(date) ?? [])];
 									const existing = scheduledMembers.map((member) => {
 										const positionName = String(member.attributes.team_position_name ?? 'Team member');
@@ -282,7 +285,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								for (const [personId, assignedDates] of priorHistory) schedulingHistory.set(personId, [...new Set([...(schedulingHistory.get(personId) ?? []), ...assignedDates])].sort());
 								const existingForScheduler = new Map([...existingByDate].map(([date, members]) => [date, members.map((member) => ({ personId: member.personId, tier: settings.get(member.personId)?.skill_level ?? null, positionId: member.positionId, countsTowardHistory: member.status !== 'Declined' }))]));
 								const suggestions = suggestWeeks(dates, slotsByDate, availability, pairs, existingForScheduler, schedulingHistory);
-								for (const week of suggestions) { const plan = plansByDate.get(week.date); const rendered = { ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url, existing: existingByDate.get(week.date) ?? [] }; renderedWeeks.push(rendered); for (const personId of new Set([...rendered.existing.map((member) => member.personId), ...rendered.assignments.map((member) => member.personId)])) schedulingHistory.set(personId, [...new Set([...(schedulingHistory.get(personId) ?? []), week.date])].sort()); }
+								for (const week of suggestions) { const plan = selectedPlansByDate.get(week.date); const rendered = { ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url, existing: existingByDate.get(week.date) ?? [] }; renderedWeeks.push(rendered); for (const personId of new Set([...rendered.existing.map((member) => member.personId), ...rendered.assignments.map((member) => member.personId)])) schedulingHistory.set(personId, [...new Set([...(schedulingHistory.get(personId) ?? []), week.date])].sort()); }
 							}
 							renderedWeeks.sort((a, b) => a.date.localeCompare(b.date));
 							const { data: draft, error: draftError } = await supabase.from('schedule_drafts').insert({ owner_id: session.user.id, name: `Band suggestions ${startsOn.value}–${endsOn.value}`, starts_on: startsOn.value, ends_on: endsOn.value }).select('id').single();
