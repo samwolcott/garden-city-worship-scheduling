@@ -7,6 +7,7 @@ export interface Candidate {
 	skill_level: SkillLevel | null;
 	positionIds: string[];
 	blockedDates: string[];
+	blockoutReasonsByDate?: Record<string, string[]>;
 	preferencesByPosition?: Record<string, string>;
 	scheduleEverySunday?: boolean;
 	minimumWeeksBetween?: number;
@@ -94,7 +95,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 					for (const candidate of qualified) {
 						const assignedDates = history.get(candidate.id) ?? []; const preference = positionPreference(candidate, slot.positionId); const gap = preferenceGap(preference);
 						if (scheduled.has(candidate.id)) add('Already present on this Planning Center plan', candidate.name);
-						else if (candidate.blockedDates.includes(date)) add('Planning Center blockout', candidate.name);
+						else if (candidate.blockedDates.includes(date)) { const reasons = candidate.blockoutReasonsByDate?.[date] ?? []; add(reasons.length ? `Planning Center blockout — ${reasons.join('; ')}` : 'Planning Center blockout', candidate.name); }
 						else if (preference.toLowerCase() === 'unavailable') add(`Planning Center ${slot.positionName} preference is Unavailable`, candidate.name);
 						else if (gap > 0 && assignedDates.some((assignedDate) => Math.abs(Date.parse(date) - Date.parse(assignedDate)) / 86400000 < gap)) add(`Planning Center cadence (${preference})`, candidate.name);
 						else if (!candidate.scheduleEverySunday && assignedDates.some((assignedDate) => Math.abs(Date.parse(date) - Date.parse(assignedDate)) / 86400000 < (candidate.minimumWeeksBetween ?? 2) * 7)) add(`Private frequency: every ${candidate.minimumWeeksBetween ?? 2} weeks`, candidate.name);

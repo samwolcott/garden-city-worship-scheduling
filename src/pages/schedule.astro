@@ -140,10 +140,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not load Planning Center plan dates.'; }
 					};
 					const nameOf = (person: Resource) => person.attributes.name ?? `${person.attributes.first_name ?? ''} ${person.attributes.last_name ?? ''}`.trim();
-					const blockedDates = (blocks: Resource[], dates: string[]) => dates.filter((date) => blocks.some((block) => {
-						const start = String(block.attributes.starts_at ?? '').slice(0, 10); const end = String(block.attributes.ends_at ?? start).slice(0, 10);
-						return start && date >= start && date <= end;
-					}));
+					const blockoutDetails = (blocks: Resource[], dates: string[]) => {
+						const blockoutReasonsByDate: Record<string, string[]> = {};
+						for (const date of dates) for (const block of blocks) {
+							const start = String(block.attributes.starts_at ?? '').slice(0, 10); const end = String(block.attributes.ends_at ?? start).slice(0, 10);
+							if (!start || date < start || date > end) continue;
+							const reason = String(block.attributes.reason ?? block.attributes.description ?? '').trim();
+							if (reason && !(blockoutReasonsByDate[date] ?? []).includes(reason)) blockoutReasonsByDate[date] = [...(blockoutReasonsByDate[date] ?? []), reason];
+							else blockoutReasonsByDate[date] ??= [];
+						}
+						return { blockedDates: Object.keys(blockoutReasonsByDate), blockoutReasonsByDate };
+					};
 					const planStatus = (status: unknown): ExistingPlanAssignment['status'] => { const value = String(status ?? '').toLowerCase(); if (value === 'c' || value === 'confirmed') return 'Confirmed'; if (value === 'd' || value === 'declined') return 'Declined'; return 'Unconfirmed'; };
 					const publishRows = async (rows: DraftRow[], trigger: HTMLButtonElement) => {
 						const pending = rows.filter((row) => !row.published_at).sort((a, b) => Number(b.position_name.toLowerCase().includes('worship leader')) - Number(a.position_name.toLowerCase().includes('worship leader'))); if (!pending.length) return;
@@ -272,8 +279,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								const eligiblePeople = people.filter((person) => settings.get(person.id)?.active && settings.get(person.id)?.skill_level);
 								const availability = await Promise.all(eligiblePeople.map(async (person) => {
 									const blocks = await fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts?filter=future&per_page=100`);
-									const occurrences = (await Promise.all(blocks.map((block) => fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts/${block.id}/blockout_dates?per_page=100`)))).flat();
-									const setting = settings.get(person.id)!; const minimumWeeksBetween = setting.minimum_weeks_between ?? 2; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], blockedDates: blockedDates(occurrences, dates), preferencesByPosition: preferencesByPerson.get(person.id) ?? {}, scheduleEverySunday: minimumWeeksBetween === 1, minimumWeeksBetween } as Candidate;
+									const occurrences = (await Promise.all(blocks.map(async (block) => (await fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts/${block.id}/blockout_dates?per_page=100`)).map((occurrence) => ({ ...occurrence, attributes: { ...occurrence.attributes, reason: occurrence.attributes.reason ?? block.attributes.reason ?? block.attributes.description } }))))).flat();
+									const setting = settings.get(person.id)!; const minimumWeeksBetween = setting.minimum_weeks_between ?? 2; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], ...blockoutDetails(occurrences, dates), preferencesByPosition: preferencesByPerson.get(person.id) ?? {}, scheduleEverySunday: minimumWeeksBetween === 1, minimumWeeksBetween } as Candidate;
 								}));
 								candidatesByTeam.set(teamId, availability);
 								const maxPreferenceGap = Math.max(0, ...availability.flatMap((candidate) => Object.values(candidate.preferencesByPosition ?? {}).map(preferenceGap)), ...availability.map((candidate) => (candidate.minimumWeeksBetween ?? 2) * 7)); const lookbackDays = Math.max(84, maxPreferenceGap);
