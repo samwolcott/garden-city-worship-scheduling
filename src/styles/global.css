@@ -81,7 +81,7 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .pair-list li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem 0; border-bottom: 1px solid #e7e1d5; }
 .pair-list .empty-pair { color: #667871; }
 .text-button { padding: .35rem .55rem; color: #9a442b; background: transparent; }
-.bands-toolbar { grid-template-columns: 1fr 1fr; }
+.bands-toolbar { grid-template-columns: 1fr; }
 .people-toolbar { grid-template-columns: 1fr auto; }
 .count-input { width: 7rem; min-width: 0; padding: .55rem; border: 1px solid #bac5c0; border-radius: 7px; background: white; }
 .team-visibility { margin: -0.25rem 0 1rem; padding: 1rem 1.2rem; background: var(--surface); border: 1px solid var(--line); }

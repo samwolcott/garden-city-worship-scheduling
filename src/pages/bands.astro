@@ -23,8 +23,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			</section>
 
 			<section class="toolbar bands-toolbar" aria-label="Weekly band controls">
-				<label>Planning Center team<select id="team-select" disabled><option>Loading teams…</option></select></label>
-				<label>Service date<select id="service-date" disabled><option>Choose a team first</option></select></label>
+				<input id="team-select" type="hidden" />
+				<label>Service date<select id="service-date" disabled><option>Loading team…</option></select></label>
 			</section>
 
 			<p id="bands-message" class="notice" role="status">Connecting to Planning Center…</p>
@@ -46,7 +46,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 			const message = document.querySelector<HTMLParagraphElement>('#bands-message')!;
 			const dateInput = document.querySelector<HTMLSelectElement>('#service-date')!;
-			const teamSelect = document.querySelector<HTMLSelectElement>('#team-select')!;
+			const teamSelect = document.querySelector<HTMLInputElement>('#team-select')!;
 			const wrap = document.querySelector<HTMLDivElement>('#requirements-wrap')!;
 			const tbody = document.querySelector<HTMLTableSectionElement>('#requirements-list')!;
 			const requiredCount = document.querySelector<HTMLElement>('#required-count')!;
@@ -116,7 +116,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						updateCount(); wrap.hidden = false;
 					};
 					const loadWeek = async () => {
-						if (!teamSelect.value || !dateInput.value) { wrap.hidden = true; message.textContent = 'Choose a service date and Planning Center team.'; return; }
+						if (!teamSelect.value || !dateInput.value) { wrap.hidden = true; message.textContent = 'Choose a service date.'; return; }
 						wrap.hidden = true; message.textContent = 'Loading weekly band…';
 						try {
 						const weeklyRequest = dateInput.value === '__default__' ? Promise.resolve({ data: [], error: null }) : supabase.from('weekly_instrument_requirements').select('id,owner_id,planning_center_team_position_id,position_name,required_count').eq('service_date', dateInput.value).eq('planning_center_team_id', teamSelect.value);
@@ -133,7 +133,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					};
 					const loadPlanDates = async () => {
 						wrap.hidden = true; requiredCount.textContent = '0'; dateInput.disabled = true; dateInput.replaceChildren(new Option('Loading Sunday plans…', ''));
-						if (!teamSelect.value) { dateInput.replaceChildren(new Option('Choose a team first', '')); message.textContent = 'Choose a Planning Center team.'; return; }
+						if (!teamSelect.value) { dateInput.replaceChildren(new Option('No scheduler team configured', '')); message.textContent = 'No Planning Center team is enabled for the scheduler.'; return; }
 						try {
 							const serviceTypeId = teamsById.get(teamSelect.value)?.relationships?.service_type?.data?.id;
 							if (!serviceTypeId) throw new Error('Planning Center did not provide a service type for this team.');
@@ -158,10 +158,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						const hiddenTeamIds = new Set((savedTeamSettings.data ?? []).filter((item) => !item.visible).map((item) => item.planning_center_team_id));
 						const teams = [...new Map(teamGroups.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at && !hiddenTeamIds.has(team.id)).map((team) => [team.id, team])).values()];
 						teamsById = new Map(teams.map((team) => [team.id, team]));
-						teamSelect.replaceChildren(new Option('Choose a team', ''));
-						for (const team of teams) teamSelect.add(new Option(team.attributes.name ?? `Team ${team.id}`, team.id));
-						teamSelect.disabled = !teams.length; message.textContent = teams.length ? 'Choose a Planning Center team to load its Sunday plans.' : 'No Planning Center teams are available.';
-						teamSelect.addEventListener('change', loadPlanDates); dateInput.addEventListener('change', loadWeek);
+						const scopedTeam = teams[0];
+						if (scopedTeam) { teamSelect.value = scopedTeam.id; message.textContent = `Loading ${scopedTeam.attributes.name ?? 'the selected team'}…`; await loadPlanDates(); }
+						else { dateInput.replaceChildren(new Option('No scheduler team configured', '')); message.textContent = 'No Planning Center team is enabled for the scheduler.'; }
+						dateInput.addEventListener('change', loadWeek);
 					} catch (error) { message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not load Planning Center.'; }
 				}
 			}
