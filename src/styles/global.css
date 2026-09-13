@@ -117,7 +117,9 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .publish-week-button, .publish-row-button, .save-week-button { padding: .4rem .6rem; font-size: .72rem; white-space: nowrap; }
 .save-week-button { color: #6d4d0d; background: #f5e7b8; border: 1px solid #d8bd6c; }
 .save-week-button:hover { color: #fff; background: #876717; }
-.published-chip { color: var(--garden); font-size: .72rem; font-weight: 750; text-transform: uppercase; letter-spacing: .05em; }
+.published-chip { padding: .25rem .5rem; color: var(--garden); background: var(--garden-soft); border-radius: 999px; font-size: .72rem; font-weight: 750; white-space: nowrap; }
+.published-chip.is-notification-prepared { color: #765a16; background: #f5e7b8; }
+.published-chip.is-notification-sent { color: #31566f; background: #dceaf3; }
 .assignment-list { margin: 0; padding: 0; list-style: none; }
 .assignment-list li { display: grid; grid-template-columns: minmax(180px, 40%) minmax(260px, 1fr) 280px; align-items: center; gap: 1rem; padding: .85rem 1.2rem; border-bottom: 1px solid #eee8dd; }
 .assignment-list li:last-child { border-bottom: 0; }
@@ -149,6 +151,8 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .existing-assignment.is-declined { background: #fff1ed; }
 .assignment-list .pending-assignment-change { background: #fff9e8; box-shadow: inset 4px 0 #d8a735; }
 .existing-chip.is-unconfirmed { color: #765a16; background: #f5e7b8; }
+.existing-chip.is-unconfirmed.is-notification-sent { color: #31566f; background: #dceaf3; }
+.existing-chip.is-unconfirmed.is-notification-prepared { color: #765a16; background: #f5e7b8; }
 .existing-chip.is-declined { color: #842f22; background: #f1c9c0; }
 .unfilled-chip { padding: .25rem .5rem; color: #842f22; background: #f1c9c0; border-radius: 999px; font-size: .72rem; font-weight: 750; }
 .publish-bar { position: sticky; bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; margin-top: 1.5rem; padding: 1rem 1.2rem; color: white; background: #17332c; border-radius: 14px; box-shadow: 0 12px 30px rgb(23 51 44 / 25%); }
