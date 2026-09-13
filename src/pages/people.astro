@@ -83,6 +83,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			let assignmentsByPerson = new Map<string, PcoPositionAssignment[]>();
 			let teamPositions: PcoPosition[] = [];
 			let availableTeams: PcoTeam[] = [];
+			let rosterTeams: PcoTeam[] = [];
 			let sortColumn: 'musician' | 'instrument' = 'musician';
 			let sortDirection: 'ascending' | 'descending' = 'ascending';
 
@@ -122,10 +123,32 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						}
 						return records;
 					};
+					const setRosterAssignments = (assignmentGroups: PcoPositionAssignment[][], positionGroups: PcoPosition[][]) => {
+						assignmentsByPerson = new Map(); instrumentsByPerson = new Map();
+						const canonicalPositionsByName = new Map(teamPositions.map((position) => [String(position.attributes.name ?? '').trim().toLowerCase(), position]));
+						for (let teamIndex = 0; teamIndex < rosterTeams.length; teamIndex++) {
+							const sourcePositionNames = new Map(positionGroups[teamIndex].map((position) => [position.id, String(position.attributes.name ?? '').trim().toLowerCase()]));
+							for (const assignment of assignmentGroups[teamIndex]) {
+								const personId = assignment.relationships?.person?.data?.id; const sourcePositionId = assignment.relationships?.team_position?.data?.id;
+								const canonicalPosition = sourcePositionId ? canonicalPositionsByName.get(sourcePositionNames.get(sourcePositionId) ?? '') : undefined;
+								if (!personId || !canonicalPosition) continue;
+								const mappedAssignment: PcoPositionAssignment = { ...assignment, relationships: { ...assignment.relationships, team_position: { data: { id: canonicalPosition.id } } } };
+								assignmentsByPerson.set(personId, [...(assignmentsByPerson.get(personId) ?? []), mappedAssignment]);
+								const names = instrumentsByPerson.get(personId) ?? []; const positionName = canonicalPosition.attributes.name ?? `Position ${canonicalPosition.id}`; if (!names.includes(positionName)) names.push(positionName); instrumentsByPerson.set(personId, names);
+							}
+						}
+					};
+					const refreshRosterAssignments = async () => {
+						const [assignmentGroups, positionGroups] = await Promise.all([
+							Promise.all(rosterTeams.map((team) => fetchAll<PcoPositionAssignment>(`/services/v2/teams/${encodeURIComponent(team.id)}/person_team_position_assignments?per_page=100`))),
+							Promise.all(rosterTeams.map((team) => fetchAll<PcoPosition>(`/services/v2/teams/${encodeURIComponent(team.id)}/team_positions?per_page=100`))),
+						]);
+						setRosterAssignments(assignmentGroups, positionGroups);
+					};
 					const render = () => {
 						const query = search.value.toLowerCase();
 						tbody.replaceChildren();
-						activeCount.textContent = String([...settings.values()].filter((item) => item.active).length);
+						activeCount.textContent = String(people.filter((person) => settings.get(person.id)?.active).length);
 						const sortedPeople = [...people].sort((a, b) => {
 							const nameA = a.attributes.name ?? `${a.attributes.first_name ?? ''} ${a.attributes.last_name ?? ''}`.trim(); const nameB = b.attributes.name ?? `${b.attributes.first_name ?? ''} ${b.attributes.last_name ?? ''}`.trim();
 							const valueA = sortColumn === 'musician' ? nameA : instrumentsByPerson.get(a.id)?.join(', ') ?? 'Not assigned'; const valueB = sortColumn === 'musician' ? nameB : instrumentsByPerson.get(b.id)?.join(', ') ?? 'Not assigned';
@@ -152,8 +175,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 									const serviceTypeId = availableTeams.find((team) => team.id === teamSelect.value)?.relationships?.service_type?.data?.id; if (!serviceTypeId) throw new Error('Could not identify this team’s service type.');
 									for (const assignment of removals) await callPco(`/services/v2/people/${encodeURIComponent(person.id)}/person_team_position_assignments/${encodeURIComponent(assignment.id)}`, 'DELETE');
 									for (const position of additions) await callPco(`/services/v2/service_types/${encodeURIComponent(serviceTypeId)}/team_positions/${encodeURIComponent(position.id)}/person_team_position_assignments`, 'POST', { data: { type: 'PersonTeamPositionAssignment', attributes: { person_id: person.id } } });
-									const refreshed = await fetchAll<PcoPositionAssignment>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/person_team_position_assignments?per_page=100`); assignmentsByPerson = new Map(); instrumentsByPerson = new Map(); const positionNames = new Map(teamPositions.map((position) => [position.id, position.attributes.name ?? `Position ${position.id}`]));
-									for (const assignment of refreshed) { const personId = assignment.relationships?.person?.data?.id; const positionId = assignment.relationships?.team_position?.data?.id; if (!personId || !positionId) continue; assignmentsByPerson.set(personId, [...(assignmentsByPerson.get(personId) ?? []), assignment]); const positionName = positionNames.get(positionId); if (positionName) instrumentsByPerson.set(personId, [...(instrumentsByPerson.get(personId) ?? []), positionName]); }
+									await refreshRosterAssignments();
 									render(); message.textContent = `${name}'s instruments were updated in Planning Center.`;
 								} catch (error) { saveInstruments.disabled = false; saveInstruments.textContent = 'Save instruments'; message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not update instruments.'; }
 							});
@@ -221,7 +243,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 					try {
 						const serviceTypes = (await fetchAll<PcoServiceType>('/services/v2/service_types?per_page=100')).filter((serviceType) => !serviceType.attributes.archived_at && !serviceType.attributes.deleted_at);
-						const nestedTeams = await Promise.all(serviceTypes.map((serviceType) => fetchAll<PcoTeam>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)));
+						const nestedTeams = await Promise.all(serviceTypes.map(async (serviceType) => (await fetchAll<PcoTeam>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)).map((team) => ({ ...team, relationships: { ...team.relationships, service_type: { data: { id: serviceType.id } } } }))));
 						availableTeams = [...new Map(nestedTeams.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at).map((team) => [team.id, team])).values()];
 						const savedTeamSettings = await supabase.from('team_settings').select('owner_id,planning_center_team_id,visible'); if (savedTeamSettings.error) throw savedTeamSettings.error;
 						const hiddenTeamIds = new Set((savedTeamSettings.data ?? []).filter((item) => !item.visible).map((item) => item.planning_center_team_id));
@@ -231,32 +253,22 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							message.textContent = availableTeams.length ? 'No Planning Center team is enabled for the scheduler.' : 'Planning Center connected, but this account can see 0 Services teams. Confirm that these are Personal Access Token credentials for a Planning Center user with access to Services and its teams.';
 						} else {
 							teamSelect.value = scopedTeam.id;
+							rosterTeams = String(scopedTeam.attributes.name ?? '').trim().toLowerCase() === 'band' ? availableTeams.filter((team) => String(team.attributes.name ?? '').trim().toLowerCase() === 'band') : [scopedTeam];
 							message.textContent = 'Loading musicians…'; table.hidden = true;
-							const [loadedPeople, positions, assignments, saved, savedPairs] = await Promise.all([
-								fetchAll<PcoPerson>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/people?per_page=100`),
+							const [peopleGroups, positions, assignmentGroups, positionGroups, saved, savedPairs] = await Promise.all([
+								Promise.all(rosterTeams.map((team) => fetchAll<PcoPerson>(`/services/v2/teams/${encodeURIComponent(team.id)}/people?per_page=100`))),
 								fetchAll<PcoPosition>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/team_positions?per_page=100`),
-								fetchAll<PcoPositionAssignment>(`/services/v2/teams/${encodeURIComponent(teamSelect.value)}/person_team_position_assignments?per_page=100`),
+								Promise.all(rosterTeams.map((team) => fetchAll<PcoPositionAssignment>(`/services/v2/teams/${encodeURIComponent(team.id)}/person_team_position_assignments?per_page=100`))),
+								Promise.all(rosterTeams.map((team) => fetchAll<PcoPosition>(`/services/v2/teams/${encodeURIComponent(team.id)}/team_positions?per_page=100`))),
 								supabase.from('member_settings').select('owner_id,planning_center_person_id,active,skill_level,minimum_weeks_between'),
 								supabase.from('required_pair_rules').select('id,owner_id,person_one_id,person_two_id').order('created_at'),
 							]);
 							if (saved.error) throw saved.error;
 							if (savedPairs.error) throw savedPairs.error;
-							people = loadedPeople; teamPositions = positions; settings = new Map((saved.data ?? []).map((item) => [item.planning_center_person_id, item as Setting]));
-							const positionNames = new Map(positions.map((position) => [position.id, position.attributes.name ?? `Position ${position.id}`]));
-							instrumentsByPerson = new Map();
-							assignmentsByPerson = new Map();
-							for (const assignment of assignments) {
-								const personId = assignment.relationships?.person?.data?.id;
-								const positionId = assignment.relationships?.team_position?.data?.id;
-								if (!personId || !positionId) continue;
-								assignmentsByPerson.set(personId, [...(assignmentsByPerson.get(personId) ?? []), assignment]);
-								const names = instrumentsByPerson.get(personId) ?? [];
-								const positionName = positionNames.get(positionId);
-								if (positionName && !names.includes(positionName)) names.push(positionName);
-								instrumentsByPerson.set(personId, names);
-							}
+							people = [...new Map(peopleGroups.flat().map((person) => [person.id, person])).values()]; teamPositions = positions; settings = new Map((saved.data ?? []).map((item) => [item.planning_center_person_id, item as Setting]));
+							setRosterAssignments(assignmentGroups, positionGroups);
 							pairRules = (savedPairs.data ?? []) as PairRule[];
-							message.textContent = `${people.length} musicians loaded from ${scopedTeam.attributes.name ?? 'the selected team'}. New musicians start inactive.`; table.hidden = false; pairingPanel.hidden = false; configurePairSelectors(); renderPairs(); render();
+							message.textContent = `${people.length} musicians loaded from ${rosterTeams.length === 1 ? scopedTeam.attributes.name ?? 'the selected team' : `${rosterTeams.length} Planning Center teams named Band`}. New musicians start inactive.`; table.hidden = false; pairingPanel.hidden = false; configurePairSelectors(); renderPairs(); render();
 						}
 						search.addEventListener('input', render); showInactive.addEventListener('change', render);
 					} catch (error) {
