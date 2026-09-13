@@ -59,6 +59,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 				<button id="generate" type="button" disabled>Suggest bands</button>
 			</section>
 			<p id="schedule-message" class="notice" role="status">Choose a range containing configured weekly bands.</p>
+			<div id="schedule-progress" class="schedule-progress" role="progressbar" aria-label="Band suggestion progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+				<div class="schedule-progress-track"><span id="schedule-progress-bar"></span></div>
+				<span id="schedule-progress-label">Preparing…</span>
+			</div>
 			<section id="schedule-results" class="schedule-results" hidden></section>
 			<div id="publish-bar" class="publish-bar" hidden>
 				<div><strong>Ready when you are</strong><span>People are added as private, unconfirmed placeholders. Planning Center prepares their requests, but does not send them.</span></div>
@@ -89,6 +93,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			const message = document.querySelector<HTMLParagraphElement>('#schedule-message')!;
 			const results = document.querySelector<HTMLElement>('#schedule-results')!;
 			const publishBar = document.querySelector<HTMLElement>('#publish-bar')!;
+			const progress = document.querySelector<HTMLElement>('#schedule-progress')!;
+			const progressBar = document.querySelector<HTMLElement>('#schedule-progress-bar')!;
+			const progressLabel = document.querySelector<HTMLElement>('#schedule-progress-label')!;
 
 			if (!supabaseConfigured) message.textContent = 'Supabase is not configured yet.';
 			else {
@@ -105,7 +112,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					let priorHistoryByTeam = new Map<string, Map<string, string[]>>();
 					let activePairs: Pair[] = [];
 					let debugStep = 0;
+					let progressHideTimer: ReturnType<typeof setTimeout> | undefined;
 					const debug = (label: string, details?: unknown) => { debugStep++; if (details === undefined) console.log(`[Band suggestions ${debugStep}] ${label}`); else console.log(`[Band suggestions ${debugStep}] ${label}`, details); };
+					const setProgress = (percent: number, label: string) => { const value = Math.max(0, Math.min(100, Math.round(percent))); progress.hidden = false; progress.setAttribute('aria-valuenow', String(value)); progress.setAttribute('aria-valuetext', label); progressBar.style.width = `${value}%`; progressLabel.textContent = label; };
 					const pendingDraftChanges = new Map<string, PendingDraftChange>();
 					const pendingExistingChanges = new Map<string, PendingExistingChange>();
 					const existingChangeKey = (assignment: ExistingPlanAssignment) => `${assignment.planPersonId}:${assignment.positionName}`;
@@ -255,10 +264,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 					generateButton.addEventListener('click', async () => {
 						if (!startsOn.value || !endsOn.value || endsOn.value < startsOn.value) { message.textContent = 'Choose a valid date range.'; return; }
-						debugStep = 0; console.group(`Band suggestion run: ${startsOn.value} through ${endsOn.value}`); debug('Starting suggestion run', { from: startsOn.value, through: endsOn.value });
+						if (progressHideTimer) clearTimeout(progressHideTimer); progress.classList.remove('has-error');
+						debugStep = 0; console.group(`Band suggestion run: ${startsOn.value} through ${endsOn.value}`); debug('Starting suggestion run', { from: startsOn.value, through: endsOn.value }); setProgress(3, 'Starting suggestion run…');
 						generateButton.disabled = true; publishBar.hidden = true; results.hidden = true; message.classList.remove('error-notice'); message.textContent = 'Reading requirements, availability, and Planning Center plans…';
 						try {
-							debug('Loading lineup requirements, member settings, pair rules, and Planning Center service types');
+							debug('Loading lineup requirements, member settings, pair rules, and Planning Center service types'); setProgress(8, 'Loading scheduling rules and service types…');
 							const [requirementsResult, defaultsResult, settingsResult, pairsResult, serviceTypes] = await Promise.all([
 								supabase.from('weekly_instrument_requirements').select('service_date,planning_center_team_id,planning_center_team_position_id,position_name,required_count').gte('service_date', startsOn.value).lte('service_date', endsOn.value).order('service_date'),
 								supabase.from('default_instrument_requirements').select('planning_center_team_id,planning_center_team_position_id,position_name,required_count'),
@@ -267,12 +277,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								fetchAll<Resource>('/services/v2/service_types?per_page=100'),
 							]);
 							if (requirementsResult.error) throw requirementsResult.error; if (defaultsResult.error) throw defaultsResult.error; if (settingsResult.error) throw settingsResult.error; if (pairsResult.error) throw pairsResult.error;
-							debug('Core scheduling data loaded', { datedRequirements: requirementsResult.data?.length ?? 0, defaultRequirements: defaultsResult.data?.length ?? 0, memberSettings: settingsResult.data?.length ?? 0, requiredPairs: pairsResult.data?.length ?? 0, serviceTypes: serviceTypes.length });
+							debug('Core scheduling data loaded', { datedRequirements: requirementsResult.data?.length ?? 0, defaultRequirements: defaultsResult.data?.length ?? 0, memberSettings: settingsResult.data?.length ?? 0, requiredPairs: pairsResult.data?.length ?? 0, serviceTypes: serviceTypes.length }); setProgress(16, 'Finding Planning Center teams…');
 							const activeServiceTypes = serviceTypes.filter((serviceType) => !serviceType.attributes.archived_at && !serviceType.attributes.deleted_at);
 							const teamGroups = await Promise.all(activeServiceTypes.map(async (serviceType) => (await fetchAll<Resource>(`/services/v2/service_types/${encodeURIComponent(serviceType.id)}/teams?per_page=100`)).map((team) => ({ ...team, relationships: { ...team.relationships, service_type: { data: { id: serviceType.id } } } }))));
 							const allActiveTeams = [...new Map(teamGroups.flat().filter((team) => !team.attributes.archived_at && !team.attributes.deleted_at).map((team) => [team.id, team])).values()];
 							const activeTeams = allActiveTeams.filter((team) => !hiddenTeamIds.has(team.id));
-							debug('Planning Center teams resolved', { totalActiveTeams: allActiveTeams.length, schedulerEnabledTeams: activeTeams.map((team) => ({ id: team.id, name: team.attributes.name })) });
+							debug('Planning Center teams resolved', { totalActiveTeams: allActiveTeams.length, schedulerEnabledTeams: activeTeams.map((team) => ({ id: team.id, name: team.attributes.name })) }); setProgress(23, 'Merging current and legacy Band teams…');
 							const activeTeamIds = new Set(activeTeams.map((team) => team.id));
 							const requirements = ((requirementsResult.data ?? []) as Requirement[]).filter((item) => activeTeamIds.has(item.planning_center_team_id));
 							const defaultRequirements = ((defaultsResult.data ?? []) as DefaultRequirement[]).filter((item) => activeTeamIds.has(item.planning_center_team_id));
@@ -292,7 +302,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								const sameServiceBandTeams = mergedBandTeams.filter((team) => team.relationships?.service_type?.data?.id === serviceTypeId);
 								const audioVisualTeams = allActiveTeams.filter((team) => team.relationships?.service_type?.data?.id === serviceTypeId && /audio\s*\/\s*visual/i.test(String(team.attributes.name ?? '')));
 								const legacyServiceTypeIds = [...new Set(mergedBandTeams.map((team) => team.relationships?.service_type?.data?.id).filter((id): id is string => Boolean(id) && id !== serviceTypeId))];
-								debug('Preparing logical team', { canonicalTeamId: teamId, name: selectedTeamName, mergedBandTeams: mergedBandTeams.map((team) => ({ id: team.id, serviceTypeId: team.relationships?.service_type?.data?.id })), audioVisualTeamIds: audioVisualTeams.map((team) => team.id) });
+								debug('Preparing logical team', { canonicalTeamId: teamId, name: selectedTeamName, mergedBandTeams: mergedBandTeams.map((team) => ({ id: team.id, serviceTypeId: team.relationships?.service_type?.data?.id })), audioVisualTeamIds: audioVisualTeams.map((team) => team.id) }); setProgress(28, 'Loading Planning Center plans…');
 								const [futurePlans, pastPayload, legacyPlanGroups] = await Promise.all([fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans?filter=future&order=sort_date&per_page=100`), callPco(`/services/v2/service_types/${serviceTypeId}/plans?filter=past&order=-sort_date&per_page=100`), Promise.all(legacyServiceTypeIds.map(async (id) => [...await fetchAll<Resource>(`/services/v2/service_types/${id}/plans?filter=future&order=sort_date&per_page=100`), ...(await callPco(`/services/v2/service_types/${id}/plans?filter=past&order=-sort_date&per_page=100`)).data ?? []]))]);
 								const legacyPlansByServiceType = new Map(legacyServiceTypeIds.map((id, index) => [id, legacyPlanGroups[index] ?? []]));
 								const plans = [...new Map([...(pastPayload.data ?? []), ...futurePlans].map((plan: Resource) => [plan.id, plan])).values()];
@@ -303,12 +313,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								const slotsByDate = new Map<string, Slot[]>();
 								for (const date of candidateDates) { const counts = new Map(teamDefaults.map((item) => [item.planning_center_team_position_id, { name: item.position_name, count: item.required_count }])); for (const item of teamRequirements.filter((entry) => entry.service_date === date)) counts.set(item.planning_center_team_position_id, { name: item.position_name, count: item.required_count }); const slots: Slot[] = []; for (const [positionId, value] of counts) for (let i = 0; i < value.count; i++) slots.push({ positionId, positionName: value.name }); if (slots.length) slotsByDate.set(date, slots); }
 								const dates = [...slotsByDate.keys()].sort();
-								debug('Plans and requested slots loaded', { team: selectedTeamName, dates, slotsByDate: Object.fromEntries([...slotsByDate].map(([date, slots]) => [date, slots.map((slot) => slot.positionName)])) });
+								debug('Plans and requested slots loaded', { team: selectedTeamName, dates, slotsByDate: Object.fromEntries([...slotsByDate].map(([date, slots]) => [date, slots.map((slot) => slot.positionName)])) }); setProgress(38, 'Matching existing assignments and Audio/Visual conflicts…'); let matchedDateCount = 0;
 								const existingByDate = new Map<string, ExistingPlanAssignment[]>();
 								const audioVisualByDate = new Map<string, AudioVisualAssignment[]>();
 								const selectedPlansByDate = new Map<string, Resource>();
 								await Promise.all(dates.map(async (date) => {
-									const datePlans = plansByDate.get(date) ?? []; if (!datePlans.length) { existingByDate.set(date, []); audioVisualByDate.set(date, []); return; }
+									const datePlans = plansByDate.get(date) ?? []; if (!datePlans.length) { existingByDate.set(date, []); audioVisualByDate.set(date, []); matchedDateCount++; setProgress(38 + (matchedDateCount / Math.max(1, dates.length)) * 17, `Matched Planning Center assignments for ${matchedDateCount} of ${dates.length} Sundays…`); return; }
 									const planMembers = await Promise.all(datePlans.map(async (plan) => ({ plan, members: (await Promise.all(sameServiceBandTeams.map((team) => fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans/${plan.id}/team_members?where[team_id]=${encodeURIComponent(team.id)}&per_page=100`)))).flat() })));
 									const selected = planMembers.sort((a, b) => b.members.length - a.members.length)[0]; const plan = selected.plan; const legacyScheduledMembers = (await Promise.all(mergedBandTeams.filter((team) => team.relationships?.service_type?.data?.id !== serviceTypeId).flatMap((team) => { const legacyServiceTypeId = team.relationships?.service_type?.data?.id; if (!legacyServiceTypeId) return []; return (legacyPlansByServiceType.get(legacyServiceTypeId) ?? []).filter((legacyPlan) => String(legacyPlan.attributes.sort_date ?? '').slice(0, 10) === date).map((legacyPlan) => fetchAll<Resource>(`/services/v2/service_types/${legacyServiceTypeId}/plans/${legacyPlan.id}/team_members?where[team_id]=${encodeURIComponent(team.id)}&per_page=100`)); }))).flat(); const scheduledMembers = [...selected.members, ...legacyScheduledMembers]; selectedPlansByDate.set(date, plan);
 									const audioVisualMembers = (await Promise.all(audioVisualTeams.map((team) => fetchAll<Resource>(`/services/v2/service_types/${serviceTypeId}/plans/${plan.id}/team_members?where[team_id]=${encodeURIComponent(team.id)}&per_page=100`)))).flat().map((member) => ({ personId: member.relationships?.person?.data?.id ?? '', personName: String(member.attributes.name ?? 'Scheduled team member'), positionName: String(member.attributes.team_position_name ?? 'Audio/Visual'), status: planStatus(member.attributes.status) })).filter((member) => member.personId && member.status !== 'Declined');
@@ -322,6 +332,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 									}).filter((member) => member.personId);
 									existingByDate.set(date, existing); slotsByDate.set(date, remaining);
 									debug('Planning Center assignments matched', { date, selectedPlanId: plan.id, existingBand: existing.map((member) => ({ name: member.personName, position: member.positionName, status: member.status, fillsRequirement: member.fillsRequirement })), audioVisual: audioVisualByDate.get(date)?.map((member) => ({ name: member.personName, position: member.positionName, status: member.status })), remainingSlots: remaining.map((slot) => slot.positionName) });
+									matchedDateCount++; setProgress(38 + (matchedDateCount / Math.max(1, dates.length)) * 17, `Matched Planning Center assignments for ${matchedDateCount} of ${dates.length} Sundays…`);
 								}));
 								const [peopleGroups, assignmentGroups, positionGroups] = await Promise.all([
 									Promise.all(mergedBandTeams.map((team) => fetchAll<Resource>(`/services/v2/teams/${encodeURIComponent(team.id)}/people?per_page=100`))),
@@ -343,10 +354,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 									}
 								}
 								const eligiblePeople = people.filter((person) => settings.get(person.id)?.active && settings.get(person.id)?.skill_level);
-								const availability = await Promise.all(eligiblePeople.map(async (person) => {
+								let loadedAvailabilityCount = 0; setProgress(58, `Checking availability for ${eligiblePeople.length} musicians…`); const availability = await Promise.all(eligiblePeople.map(async (person) => {
 									const blocks = await fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts?filter=future&per_page=100`);
 									const occurrences = (await Promise.all(blocks.map(async (block) => (await fetchAll<Resource>(`/services/v2/people/${person.id}/blockouts/${block.id}/blockout_dates?per_page=100`)).map((occurrence) => ({ ...occurrence, attributes: { ...occurrence.attributes, reason: occurrence.attributes.reason ?? block.attributes.reason ?? block.attributes.description } }))))).flat();
-									const setting = settings.get(person.id)!; const minimumWeeksBetween = setting.minimum_weeks_between ?? 2; return { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], ...blockoutDetails(occurrences, dates), preferencesByPosition: preferencesByPerson.get(person.id) ?? {}, scheduleEverySunday: minimumWeeksBetween === 1, minimumWeeksBetween } as Candidate;
+									const setting = settings.get(person.id)!; const minimumWeeksBetween = setting.minimum_weeks_between ?? 2; const candidate = { id: person.id, name: nameOf(person), active: setting.active, skill_level: setting.skill_level, positionIds: positionIds.get(person.id) ?? [], ...blockoutDetails(occurrences, dates), preferencesByPosition: preferencesByPerson.get(person.id) ?? {}, scheduleEverySunday: minimumWeeksBetween === 1, minimumWeeksBetween } as Candidate; loadedAvailabilityCount++; setProgress(58 + (loadedAvailabilityCount / Math.max(1, eligiblePeople.length)) * 18, `Checked availability for ${loadedAvailabilityCount} of ${eligiblePeople.length} musicians…`); return candidate;
 								}));
 								debug('Eligible roster and availability loaded', { team: selectedTeamName, eligibleMusicians: availability.length, blockedByDate: Object.fromEntries(dates.map((date) => [date, availability.filter((person) => person.blockedDates.includes(date)).map((person) => person.name)])) });
 								candidatesByTeam.set(teamId, availability);
@@ -358,20 +369,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 								priorHistoryByTeam.set(teamId, priorHistory);
 								for (const [personId, assignedDates] of priorHistory) schedulingHistory.set(personId, [...new Set([...(schedulingHistory.get(personId) ?? []), ...assignedDates])].sort());
 								const existingForScheduler = new Map([...existingByDate].map(([date, members]) => [date, [...members.map((member) => ({ personId: member.personId, tier: settings.get(member.personId)?.skill_level ?? null, positionId: member.positionId, countsTowardHistory: member.status !== 'Declined' })), ...(audioVisualByDate.get(date) ?? []).map((member) => ({ personId: member.personId, tier: settings.get(member.personId)?.skill_level ?? null, countsTowardHistory: false }))]]));
-								debug('Running deterministic scheduler', { dates: dates.length, candidates: availability.length, priorHistoryEntries: schedulingHistory.size });
+								debug('Running deterministic scheduler', { dates: dates.length, candidates: availability.length, priorHistoryEntries: schedulingHistory.size }); setProgress(82, 'Building balanced weekly suggestions…');
 								const suggestions = suggestWeeks(dates, slotsByDate, availability, pairs, existingForScheduler, schedulingHistory, (event) => debug(`Scheduler: ${event.step}`, { date: event.date, ...event.details }));
 								for (const week of suggestions) { const plan = selectedPlansByDate.get(week.date); const rendered = { ...week, teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, planId: plan?.id, planUrl: plan?.attributes.planning_center_url, existing: existingByDate.get(week.date) ?? [], audioVisual: audioVisualByDate.get(week.date) ?? [] }; renderedWeeks.push(rendered); for (const personId of new Set([...rendered.existing.map((member) => member.personId), ...rendered.assignments.map((member) => member.personId)])) schedulingHistory.set(personId, [...new Set([...(schedulingHistory.get(personId) ?? []), week.date])].sort()); }
 							}
 							renderedWeeks.sort((a, b) => a.date.localeCompare(b.date));
+							setProgress(94, 'Saving the schedule draft…');
 							const { data: draft, error: draftError } = await supabase.from('schedule_drafts').insert({ owner_id: session.user.id, name: `Band suggestions ${startsOn.value}–${endsOn.value}`, starts_on: startsOn.value, ends_on: endsOn.value }).select('id').single();
 							if (draftError) throw draftError; draftId = draft.id;
 							const rows = renderedWeeks.flatMap((week) => week.planId ? week.assignments.map((assignment) => ({ owner_id: session.user.id, draft_id: draftId, planning_center_plan_id: week.planId!, planning_center_person_id: assignment.personId, planning_center_team_id: week.teamId, position_name: assignment.positionName, person_name: assignment.personName })) : []);
 							if (rows.length) { const { data, error } = await supabase.from('draft_assignments').insert(rows).select('id,planning_center_plan_id,planning_center_person_id,planning_center_team_id,position_name,person_name,planning_center_plan_person_id,published_at'); if (error) throw error; draftRows = data as DraftRow[]; } else draftRows = [];
-							debug('Schedule draft saved', { draftId, placeholderRows: draftRows.length });
+							debug('Schedule draft saved', { draftId, placeholderRows: draftRows.length }); setProgress(98, 'Rendering suggestions…');
 							renderSchedule(); const unfilled = renderedWeeks.reduce((sum, week) => sum + week.unfilled.length, 0); const missingPlans = renderedWeeks.filter((week) => !week.planId).length;
 							const existingCount = renderedWeeks.reduce((sum, week) => sum + week.existing.length, 0);
-							message.textContent = `${existingCount} existing Planning Center assignment${existingCount === 1 ? '' : 's'} found. ${draftRows.length} placeholder${draftRows.length === 1 ? '' : 's'} suggested to fill the remaining gaps across ${renderedWeeks.length} weekly band${renderedWeeks.length === 1 ? '' : 's'}.${unfilled ? ` ${unfilled} position${unfilled === 1 ? '' : 's'} could not be filled.` : ''}${missingPlans ? ` ${missingPlans} week${missingPlans === 1 ? '' : 's'} has no matching Planning Center plan.` : ''}`; debug('Suggestion run complete', { existingAssignments: existingCount, suggestedPlaceholders: draftRows.length, unfilled, missingPlans });
-						} catch (error) { console.error('[Band suggestions] Run failed', error); message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not generate suggestions.'; }
+							message.textContent = `${existingCount} existing Planning Center assignment${existingCount === 1 ? '' : 's'} found. ${draftRows.length} placeholder${draftRows.length === 1 ? '' : 's'} suggested to fill the remaining gaps across ${renderedWeeks.length} weekly band${renderedWeeks.length === 1 ? '' : 's'}.${unfilled ? ` ${unfilled} position${unfilled === 1 ? '' : 's'} could not be filled.` : ''}${missingPlans ? ` ${missingPlans} week${missingPlans === 1 ? '' : 's'} has no matching Planning Center plan.` : ''}`; debug('Suggestion run complete', { existingAssignments: existingCount, suggestedPlaceholders: draftRows.length, unfilled, missingPlans }); setProgress(100, 'Suggestions ready'); progressHideTimer = setTimeout(() => { progress.hidden = true; }, 1400);
+						} catch (error) { console.error('[Band suggestions] Run failed', error); setProgress(Number(progress.getAttribute('aria-valuenow') ?? 0), 'Suggestion run stopped'); progress.classList.add('has-error'); message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not generate suggestions.'; }
 						finally { generateButton.disabled = false; console.groupEnd(); }
 					});
 
