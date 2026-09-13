@@ -171,10 +171,6 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .existing-chip.is-unconfirmed.is-notification-prepared { color: #765a16; background: #f5e7b8; }
 .existing-chip.is-declined { color: #842f22; background: #f1c9c0; }
 .unfilled-chip { padding: .25rem .5rem; color: #842f22; background: #f1c9c0; border-radius: 999px; font-size: .72rem; font-weight: 750; }
-.publish-bar { position: sticky; bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; margin-top: 1.5rem; padding: 1rem 1.2rem; color: white; background: #17332c; border-radius: 14px; box-shadow: 0 12px 30px rgb(23 51 44 / 25%); }
-.publish-bar div { display: grid; gap: .25rem; }
-.publish-bar span { color: #c8d5d1; font-size: .82rem; }
-.publish-bar button { color: #17332c; background: #fffdf7; }
 /* Garden City brand treatment */
 .lede, .notice, .status, .features p, .panel p, .save-state, .week-heading > a, .week-heading > span, .week-heading-actions > a, .week-heading-actions > span { color: var(--muted); }
 .panel, .toolbar, .table-wrap, .pairing-panel, .week-card { background: var(--surface); border-color: var(--line); border-radius: 2px; box-shadow: none; }
@@ -183,8 +179,6 @@ button:hover, .button-link:hover { background: #356b49; }
 input, select, .toolbar select, .toolbar input, .pair-form select, td select, .count-input { border-color: #c9c4bb; border-radius: 2px; }
 th { color: var(--garden); }
 .tier-chip { color: #28543a; background: var(--garden-soft); }
-.publish-bar { background: var(--ink); border-radius: 2px; }
-.publish-bar button { color: white; background: var(--garden); }
 @media (max-width: 920px) {
 	.assignment-list li { grid-template-columns: 1fr; gap: .35rem; }
 	.assignment-list li > span:first-child { display: grid; grid-template-columns: 1fr; gap: .15rem; }
@@ -208,7 +202,7 @@ th { color: var(--garden); }
 	.pair-form > span { padding: 0; }
 	.schedule-toolbar { grid-template-columns: 1fr; }
 	.rules-grid { grid-template-columns: 1fr; gap: 1.25rem; }
-	.week-heading, .publish-bar { align-items: stretch; flex-direction: column; }
+	.week-heading { align-items: stretch; flex-direction: column; }
 	.week-heading-actions { align-items: stretch; flex-direction: column; }
 	.team-visibility-list { grid-template-columns: 1fr; }
 }

@@ -64,10 +64,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 				<span id="schedule-progress-label">Preparing…</span>
 			</div>
 			<section id="schedule-results" class="schedule-results" hidden></section>
-			<div id="publish-bar" class="publish-bar" hidden>
-				<div><strong>Ready when you are</strong><span>People are added as private, unconfirmed placeholders. Planning Center prepares their requests, but does not send them.</span></div>
-				<button id="publish" type="button">Add placeholders to Planning Center</button>
-			</div>
 		</main>
 
 		<script>
@@ -90,10 +86,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			const startsOn = document.querySelector<HTMLSelectElement>('#starts-on')!;
 			const endsOn = document.querySelector<HTMLSelectElement>('#ends-on')!;
 			const generateButton = document.querySelector<HTMLButtonElement>('#generate')!;
-			const publishButton = document.querySelector<HTMLButtonElement>('#publish')!;
 			const message = document.querySelector<HTMLParagraphElement>('#schedule-message')!;
 			const results = document.querySelector<HTMLElement>('#schedule-results')!;
-			const publishBar = document.querySelector<HTMLElement>('#publish-bar')!;
 			const progress = document.querySelector<HTMLElement>('#schedule-progress')!;
 			const progressBar = document.querySelector<HTMLElement>('#schedule-progress-bar')!;
 			const progressLabel = document.querySelector<HTMLElement>('#schedule-progress-label')!;
@@ -291,7 +285,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 							for (const slot of week.unfilled) { const item = document.createElement('li'); item.className = 'unfilled'; const identity = document.createElement('span'); const position = document.createElement('strong'); position.textContent = slot.positionName; const explanation = document.createElement('span'); explanation.className = 'person-with-reason'; explanation.append(document.createTextNode('No eligible, available musician')); const tooltip = document.createElement('span'); tooltip.className = 'reason-tooltip unfilled-tooltip'; tooltip.tabIndex = 0; tooltip.setAttribute('aria-label', `Why ${slot.positionName} is unfilled`); tooltip.textContent = 'i'; const tooltipBody = document.createElement('span'); tooltipBody.setAttribute('role', 'tooltip'); const reasons = document.createElement('ul'); for (const reason of slot.reasons) { const reasonItem = document.createElement('li'); reasonItem.textContent = reason; reasons.append(reasonItem); } tooltipBody.append(reasons); tooltip.append(tooltipBody); explanation.append(tooltip); identity.append(position, explanation); const status = document.createElement('span'); status.className = 'unfilled-chip'; status.textContent = 'Unfilled'; item.append(identity, status); list.append(item); }
 							card.append(list); results.append(card);
 						}
-						const pendingCount = draftRows.filter((row) => !row.published_at).length; const stagedCount = pendingDraftChanges.size + pendingExistingChanges.size; results.hidden = false; publishBar.hidden = !pendingCount; publishButton.disabled = stagedCount > 0; publishButton.title = stagedCount ? 'Save all pending date changes before publishing placeholders.' : ''; publishButton.textContent = pendingCount === draftRows.length ? 'Add all placeholders to Planning Center' : `Add remaining ${pendingCount} placeholder${pendingCount === 1 ? '' : 's'}`;
+						results.hidden = false;
 					};
 					await loadPlanDateOptions();
 
@@ -299,7 +293,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						if (!startsOn.value || !endsOn.value || endsOn.value < startsOn.value) { message.textContent = 'Choose a valid date range.'; return; }
 						if (progressHideTimer) clearTimeout(progressHideTimer); progress.classList.remove('has-error');
 						debugStep = 0; console.group(`Band suggestion run: ${startsOn.value} through ${endsOn.value}`); debug('Starting suggestion run', { from: startsOn.value, through: endsOn.value }); setProgress(3, 'Starting suggestion run…');
-						generateButton.disabled = true; publishBar.hidden = true; results.hidden = true; message.classList.remove('error-notice'); message.textContent = 'Reading requirements, availability, and Planning Center plans…';
+						generateButton.disabled = true; results.hidden = true; message.classList.remove('error-notice'); message.textContent = 'Reading requirements, availability, and Planning Center plans…';
 						try {
 							debug('Loading lineup requirements, member settings, pair rules, and Planning Center service types'); setProgress(8, 'Loading scheduling rules and service types…');
 							const [requirementsResult, defaultsResult, settingsResult, pairsResult, serviceTypes] = await Promise.all([
@@ -419,8 +413,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 						} catch (error) { console.error('[Band suggestions] Run failed', error); setProgress(Number(progress.getAttribute('aria-valuenow') ?? 0), 'Suggestion run stopped'); progress.classList.add('has-error'); message.classList.add('error-notice'); message.textContent = error instanceof Error ? error.message : 'Could not generate suggestions.'; }
 						finally { generateButton.disabled = false; console.groupEnd(); }
 					});
-
-					publishButton.addEventListener('click', () => publishRows(draftRows, publishButton));
 				}
 			}
 		</script>
