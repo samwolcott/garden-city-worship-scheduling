@@ -137,11 +137,12 @@ td select { min-width: 130px; padding: .55rem; border: 1px solid #bac5c0; border
 .swap-editor { display: flex; align-items: center; gap: .35rem; }
 .swap-editor select { max-width: 220px; padding: .4rem; border: 1px solid var(--line); }
 .pending-assignment-change { background: #fff9e8; box-shadow: inset 4px 0 #d8a735; }
-.pending-change-chip { padding: .25rem .5rem; color: #6d4d0d; background: #f5e7b8; border-radius: 999px; font-size: .72rem; font-weight: 750; white-space: nowrap; }
+.pending-change-chip { width: max-content; justify-self: end; padding: .25rem .65rem; color: #6d4d0d; background: #f5e7b8; border-radius: 999px; font-size: .72rem; font-weight: 750; line-height: 1.2; white-space: nowrap; }
 .existing-assignment { background: #f3f7f3; }
 .existing-chip { padding: .25rem .5rem; color: #28543a; background: var(--garden-soft); border-radius: 999px; font-size: .72rem; font-weight: 750; }
 .existing-assignment.is-unconfirmed { background: #fff9eb; }
 .existing-assignment.is-declined { background: #fff1ed; }
+.assignment-list .pending-assignment-change { background: #fff9e8; box-shadow: inset 4px 0 #d8a735; }
 .existing-chip.is-unconfirmed { color: #765a16; background: #f5e7b8; }
 .existing-chip.is-declined { color: #842f22; background: #f1c9c0; }
 .unfilled-chip { padding: .25rem .5rem; color: #842f22; background: #f1c9c0; border-radius: 999px; font-size: .72rem; font-weight: 750; }
