@@ -31,7 +31,7 @@ Allowed sprint statuses:
 - `READY FOR REVIEW`
 - `COMPLETE`
 
-Current sprint: none; roadmap approval is pending.
+Current sprint: none; the revised roadmap is awaiting review.
 
 Recommended next sprint after approval: **Sprint 0 — Coexistence and test
 foundation**.
@@ -40,16 +40,16 @@ foundation**.
 | --- | --- | --- |
 | 0 | Coexistence and test foundation | NOT STARTED |
 | 1 | Scheduling domain snapshot | NOT STARTED |
-| 2 | Role-specific musician intelligence | NOT STARTED |
-| 3 | Band templates and balance policy | NOT STARTED |
-| 4 | Deterministic band evaluator | NOT STARTED |
-| 5 | Human calibration workbench | NOT STARTED |
-| 6 | Single-week candidate generation | NOT STARTED |
-| 7 | Single-week Build My Band workflow | NOT STARTED |
-| 8 | Global optimizer bake-off | NOT STARTED |
-| 9 | Multi-week optimization | NOT STARTED |
-| 10 | Multi-week scheduling workspace | NOT STARTED |
-| 11 | Planning Center read normalization | NOT STARTED |
+| 2 | Planning Center read normalization | NOT STARTED |
+| 3 | Role-specific musician intelligence | NOT STARTED |
+| 4 | Band templates and balance policy | NOT STARTED |
+| 5 | Deterministic band evaluator | NOT STARTED |
+| 6 | Human calibration workbench | NOT STARTED |
+| 7 | Single-week candidate generation | NOT STARTED |
+| 8 | Single-week Build My Band workflow | NOT STARTED |
+| 9 | Global optimizer bake-off | NOT STARTED |
+| 10 | Multi-week optimization | NOT STARTED |
+| 11 | Multi-week scheduling workspace | NOT STARTED |
 | 12 | Availability-message import | NOT STARTED |
 | 13 | Rich scheduling constraints from messages | NOT STARTED |
 | 14 | Reviewed Planning Center blockout write-back | NOT STARTED |
@@ -129,26 +129,66 @@ and a learning baseline, not the V2 balance model.
 - Broad page files as the primary home for reusable scheduling behavior.
 - Treating AI output as authoritative data or allowing it to initiate writes.
 
-## Decisions required before Sprint 1
+## Resolved architecture and product decisions
 
-Sprint 0 should produce recommendations and decision records for these items;
-approval of this roadmap does not silently decide all of them:
+These decisions govern the roadmap and should be changed only through an explicit
+roadmap revision:
 
-1. **Deployment boundary:** whether V2 may use a small private Python/OR-Tools
-   service if the optimizer bake-off justifies it, or must remain Astro/Supabase
-   TypeScript only.
-2. **Feature access:** the owner-only feature flag mechanism and whether `/v2`
-   may be present in production while experimental.
-3. **Data isolation:** dedicated V2 tables versus versioned records alongside V1.
-   Additive dedicated tables are the current recommendation.
-4. **Talent semantics:** role-specific A/B/C as authoritative, with the existing
-   global tier used only to seed defaults. This is the current recommendation.
-5. **Service unit:** whether one Sunday/plan is sufficient or whether multiple
-   service times require distinct assignment constraints.
-6. **Data retention:** how long imported messages, AI interpretations, audit
-   events, and solver snapshots should be retained.
-7. **Optimization policy ownership:** which balance rules are user-configurable
-   and which are product defaults.
+1. **Parallel tracks:** V1 remains the continuously deployable production tool
+   and learning source. V2 work stays isolated and does not freeze or covertly
+   refactor V1. Learnings are recorded before they influence V2 behavior.
+2. **Repository strategy:** use one repository, stable `main`, short-lived feature
+   branches, `/v2` route and module boundaries, and additive persistence changes.
+3. **Planning Center sequencing:** normalize Planning Center reads early in Sprint
+   2. Keep every Planning Center write late, reviewed, deterministic, verified,
+   and audited.
+4. **Talent source of truth:** V2 uses private `musician + role -> A/B/C` ratings.
+   A means Strong, B means Solid, and C means Developing—not unschedulable. Only
+   roles the musician actually serves require ratings. V1 global ratings may seed
+   V2 data but remain authoritative only for V1.
+5. **Scheduling unit:** initially treat one service date and Planning Center plan
+   as one scheduling unit. Preserve room for multiple service-time constraints
+   without implementing them until actual workflow evidence requires it.
+6. **Locks and exclusions:** both are first-class domain inputs from Sprint 1.
+   Locks identify person, service/date, and role. Exclusions identify person,
+   service/date, and an optional role.
+7. **Balance configuration:** early policies are internal and versioned (for
+   example v0.1, v0.2). Do not build a broad settings UI until calibration proves
+   which parameters are useful.
+8. **Complete-band philosophy:** a C musician may be well supported in one lineup
+   and risky in another. Evaluation must model role context, anchors, and
+   complementary groups rather than maximizing individual talent.
+9. **Chemistry extensibility:** domain identifiers and policy inputs must leave a
+   narrow path for preferred, strong-chemistry, required, avoid, complementary,
+   and group relationships. Do not implement speculative chemistry scoring before
+   calibration evidence supports it.
+10. **Explainability:** deterministic reason codes must explain both selection and
+    non-selection, including global opportunity costs across weeks. OpenAI may
+    later phrase these facts but may never invent them.
+11. **Global objective:** use lexicographic priorities: satisfy hard constraints/
+    minimize required-role gaps; maximize the weakest Sunday; minimize quality
+    variance; improve rotation and preferences; then minimize disruption. Raising
+    the floor is more important than producing one exceptional week.
+12. **Optimizer freedom:** Sprint 9 must compare TypeScript bounded search,
+    OR-Tools CP-SAT, and exhaustive tiny-case verification. A private Python
+    service is allowed if evidence justifies its complexity.
+13. **Calibration:** human Band A/B comparisons and replay across policy versions
+    are required before candidate generation and optimization are treated as
+    trustworthy.
+14. **Message import:** retain the reviewed text-message availability and rich
+    constraint workflows. AI interprets language; deterministic code validates
+    and schedules; a human confirms.
+15. **Write safety:** OpenAI never initiates a Planning Center mutation. All writes
+    follow interpretation -> structured proposal -> deterministic validation ->
+    visible diff -> human confirmation -> write -> verification/audit.
+16. **Retention:** keep policy versions, calibration fixtures, solver snapshots,
+    and audit history indefinitely unless storage becomes material. Prefer
+    structured scheduling facts and minimal useful source context over indefinite
+    retention of unrelated raw message conversation.
+
+Sprint 0 still needs to choose the concrete feature-flag mechanism and document
+the exact V2 data namespace. Those are Sprint 0 deliverables, not blockers to
+starting it.
 
 ## Sprint plan
 
@@ -172,8 +212,9 @@ and user-visible V2 workflows.
 
 **Technical Work:** Add test tooling compatible with Astro/TypeScript; make only
 the smallest extractions needed to test V1 pure functions; define versioned
-domain boundaries and migration rules; record the optimizer deployment decision
-or the criteria and deadline for making it.
+domain boundaries and migration rules; document the internal V2 data namespace;
+and record that the optimizer deployment decision is intentionally deferred to
+Sprint 9's evidence-based bake-off.
 
 **Acceptance Criteria:** V1 builds and its principal routes still work; V1
 scheduler fixtures pass; unfinished V2 code cannot appear to ordinary users;
@@ -196,27 +237,72 @@ and future optimization.
 **Why:** Scoring and solvers must operate on stable application concepts rather
 than UI state or raw Planning Center payloads.
 
-**Scope:** Model musicians, roles, service dates, requested slots, assignments,
-availability states, blockouts, source provenance, locks, exclusions, and rule
-configuration. Create fixture builders and validation.
+**Scope:** Model musicians, roles, one service date/Planning Center plan as the
+initial scheduling unit, requested slots, assignments, availability states,
+blockouts, source provenance, locks, exclusions, relationship-extension records,
+and rule configuration. A locked assignment identifies person, service/date, and
+role. An exclusion identifies person, service/date, and an optional role. Create
+fixture builders and validation.
 
 **Out of Scope:** Scoring, schedule generation, API sync, and UI editing.
 
 **Technical Work:** Pure TypeScript domain types, runtime validation, date/time
-rules, normalized IDs, snapshot versioning, and representative sanitized fixtures.
+rules, normalized IDs, snapshot versioning, deterministic constraint reason-code
+shapes, and representative sanitized fixtures. Reserve typed, versionable space
+for required/preferred/avoid/complementary person or group relationships without
+implementing chemistry scoring.
 
 **Acceptance Criteria:** Valid snapshots round-trip deterministically; invalid or
 ambiguous inputs produce useful errors; fixtures represent existing assignments,
 missing data, and multiple Sundays.
 
 **Testing:** Validation boundaries, duplicate identities, timezone/date cases,
-unknown availability, and snapshot-version failures.
+unknown availability, lock/exclusion conflicts, role-scoped exclusions, relationship
+references, and snapshot-version failures.
 
 **Dependencies:** Sprint 0.
 
 **V1 Impact:** None; a read adapter may later reuse V1 data.
 
-### Sprint 2 — Role-specific musician intelligence
+### Sprint 2 — Planning Center read normalization
+
+**Status:** NOT STARTED
+
+**Goal:** Make real Planning Center scheduling data a reliable, observable input
+to the V2 domain model early.
+
+**Why:** Talent modeling, evaluation, and fixtures should be exercised against
+the identities and plan structures V2 will actually consume. Optimization is
+only trustworthy when existing assignments, statuses, roles, and blockouts are
+correct and fresh.
+
+**Scope:** Normalize people, teams, positions, plans, service dates, existing
+assignments, Confirmed/Unconfirmed/Declined status, blockouts/reasons, and stable
+Planning Center IDs into Sprint 1 snapshots. Record source and freshness metadata.
+
+**Out of Scope:** Planning Center writes, schedule generation, balance scoring,
+and support for independently optimizing multiple service times.
+
+**Technical Work:** Typed server-side read client and domain adapters, pagination,
+rate/error handling, conservative caching policy, identity mapping, sync metadata,
+sanitized real-payload fixtures, and contract tests. Reuse the hardened transport
+where safe without coupling V2 to V1 page orchestration.
+
+**Acceptance Criteria:** V2 can construct and validate a domain snapshot from the
+selected real Planning Center plan; every imported fact has source/freshness;
+assignment status and blockouts map correctly; partial sync failure cannot appear
+as availability; no mutation endpoint is added.
+
+**Testing:** Pagination, missing relationships, duplicate names, stable ID mapping,
+archived records, status variants, blockout ranges/reasons, rate limits, partial
+failures, stale cache, and sanitized-real-payload replay.
+
+**Dependencies:** Sprint 1.
+
+**V1 Impact:** None. A hardened shared read adapter may benefit V1 later only
+through a separate reviewed V1 change.
+
+### Sprint 3 — Role-specific musician intelligence
 
 **Status:** NOT STARTED
 
@@ -226,9 +312,10 @@ administration.
 **Why:** Complete-band quality cannot be assessed accurately from one global
 tier when a musician's ability varies by instrument.
 
-**Scope:** Add role ratings, primary/secondary role metadata, provenance, and
-missing/inherited states; build an owner-only V2 editor; seed role ratings from
-the V1 global tier without changing V1.
+**Scope:** Make `musician + served role -> A/B/C` the V2 source of truth. Add
+primary/secondary role metadata, provenance, and missing/inherited states; build
+an owner-only V2 editor; seed ratings for actual served roles from the V1 global
+tier without changing V1. A means Strong, B Solid, and C Developing.
 
 **Out of Scope:** Band scoring, automatic inference, and exposing ratings to
 musicians or Planning Center.
@@ -236,18 +323,19 @@ musicians or Planning Center.
 **Technical Work:** Additive V2 schema and RLS, import/seed preview, typed CRUD,
 private admin UI, and audit timestamps.
 
-**Acceptance Criteria:** Each schedulable role can have an explicit A/B/C rating;
-inheritance is visible; missing data is never silently invented; V1 continues to
-use its existing tier.
+**Acceptance Criteria:** Each role a musician actually serves can have an explicit
+A/B/C rating; unrelated roles require no rating; inheritance is visible; missing
+data is never silently invented; ratings remain private and are never written to
+Planning Center; V1 continues to use its existing tier.
 
 **Testing:** RLS/privacy, imports, overrides, deleted Planning Center roles,
 missing ratings, and V1 regression smoke tests.
 
-**Dependencies:** Sprint 1.
+**Dependencies:** Sprints 1–2.
 
 **V1 Impact:** Read-only seeding from V1 settings.
 
-### Sprint 3 — Band templates and balance policy
+### Sprint 4 — Band templates and balance policy
 
 **Status:** NOT STARTED
 
@@ -257,27 +345,31 @@ numeric scores.
 **Why:** Anchor roles and developing-musician support are product policy, not
 solver implementation details.
 
-**Scope:** Configure required roles/counts, anchor roles, complementary groups
-(such as rhythm section), maximum recommended C count, C-support rules, hard
-versus soft constraints, and versioned policy presets.
+**Scope:** Define required roles/counts, anchor roles, complementary groups (such
+as rhythm section), maximum recommended C count, contextual C-support rules, hard
+versus soft constraints, and internal versioned policy presets. Include a reserved
+policy representation for evidence-backed pair/group modifiers without assigning
+speculative chemistry weights.
 
 **Out of Scope:** Candidate generation, optimization, and final weight tuning.
 
-**Technical Work:** Policy schema, validation, owner-only editor, immutable policy
-versions referenced by evaluations, and defaults based on V1 learnings.
+**Technical Work:** Internal policy schema, validation, immutable policy versions
+referenced by evaluations, and defaults based on accepted V1 learnings. Provide
+developer/calibration inspection only; do not build a broad settings UI.
 
-**Acceptance Criteria:** A band template can describe current required positions
-and explain each rule in plain language; invalid or contradictory configurations
-are rejected.
+**Acceptance Criteria:** A versioned internal policy can describe current required
+positions and explain each rule in plain language; it treats C as contextual
+development rather than disqualification; invalid or contradictory configurations
+are rejected; theoretical weights are not exposed as user settings.
 
 **Testing:** Missing anchors, alternative harmonic roles, multiple required slots,
 contradictory rules, and policy-version replay.
 
-**Dependencies:** Sprints 1–2.
+**Dependencies:** Sprints 1–3.
 
 **V1 Impact:** None.
 
-### Sprint 4 — Deterministic band evaluator
+### Sprint 5 — Deterministic band evaluator
 
 **Status:** NOT STARTED
 
@@ -288,27 +380,31 @@ attempts to build schedules.
 
 **Scope:** Calculate coverage, anchor strength, tier composition, weakest critical
 area, complementary-group strength, developing-musician support, warnings, and
-a normalized presentation score with a detailed breakdown.
+a normalized presentation score with a detailed breakdown. Produce deterministic
+selection, rejection, and alternative reason codes suitable for later “Why?” and
+“Why wasn't X selected?” explanations.
 
 **Out of Scope:** Searching for musicians, multi-week fairness, AI explanations,
 and Planning Center writes.
 
-**Technical Work:** Pure deterministic evaluator; structured reason codes;
-versioned scoring configuration; golden fixtures; optional exhaustive enumeration
-for tiny test cases.
+**Technical Work:** Pure deterministic evaluator; structured positive, negative,
+and counterfactual reason codes; versioned scoring configuration; golden fixtures;
+and optional exhaustive enumeration for tiny test cases. Reasons must originate
+in deterministic evaluation, never generated inference.
 
 **Acceptance Criteria:** Identical inputs produce identical results; every score
 change is traceable to named factors; hard failures cannot be hidden by a high
-aggregate score.
+aggregate score; the result can state why a person/role substitution is invalid
+or changes band quality without relying on OpenAI.
 
 **Testing:** Strong/weak rhythm sections, unsupported C musicians, missing anchors,
 role-specific tiers, equivalent lineups, and incomplete-rating confidence.
 
-**Dependencies:** Sprints 1–3.
+**Dependencies:** Sprints 1–4.
 
 **V1 Impact:** None.
 
-### Sprint 5 — Human calibration workbench
+### Sprint 6 — Human calibration workbench
 
 **Status:** NOT STARTED
 
@@ -319,7 +415,9 @@ tuning evidence.
 of product learning.
 
 **Scope:** Owner-only Band A versus Band B comparison; score breakdown differences;
-human preference and notes; fixture export; policy-version comparison.
+human preference and notes; explicit feedback on anchors, A/B/C combinations,
+developing-musician support, and possible chemistry effects; fixture export; and
+policy-version comparison.
 
 **Out of Scope:** Automatic schedule generation and changing weights without
 review.
@@ -329,15 +427,17 @@ documented tuning workflow connected to `V2_LEARNINGS.md`.
 
 **Acceptance Criteria:** A reviewer can select a preferred band, explain why, and
 replay the same comparison after a rule change without overwriting old evidence.
+The workbench can inspect “Why not this musician?” reason codes and record when
+the deterministic explanation disagrees with human judgment.
 
 **Testing:** Ties, contradictory human judgments, policy revisions, incomplete
 data, and export/import replay.
 
-**Dependencies:** Sprint 4.
+**Dependencies:** Sprint 5.
 
 **V1 Impact:** None; V1 observations supply examples.
 
-### Sprint 6 — Single-week candidate generation
+### Sprint 7 — Single-week candidate generation
 
 **Status:** NOT STARTED
 
@@ -347,7 +447,7 @@ data, and export/import replay.
 and provides a bounded proving ground before global optimization.
 
 **Scope:** Apply hard eligibility constraints; enumerate or intelligently search
-complete candidates; score them with Sprint 4; return ranked, deduplicated
+complete candidates; score them with Sprint 5; return ranked, deduplicated
 alternatives and rejection diagnostics.
 
 **Out of Scope:** Multi-week allocation, polished end-user workflow, and writes.
@@ -362,11 +462,11 @@ match exhaustive results on small scenarios; limits and truncation are disclosed
 **Testing:** Scarce roles, required pairs, dual-role musicians, blocks, existing
 assignments, locks, exclusions, no feasible band, and large-roster performance.
 
-**Dependencies:** Sprints 4–5.
+**Dependencies:** Sprints 5–6.
 
 **V1 Impact:** None.
 
-### Sprint 7 — Single-week Build My Band workflow
+### Sprint 8 — Single-week Build My Band workflow
 
 **Status:** NOT STARTED
 
@@ -389,11 +489,11 @@ single-week draft without affecting a V1 draft or Planning Center.
 **Testing:** Mobile/desktop UI, stale inputs, reloads, lock conflicts, no feasible
 result, and V1 isolation.
 
-**Dependencies:** Sprint 6.
+**Dependencies:** Sprint 7.
 
 **V1 Impact:** None.
 
-### Sprint 8 — Global optimizer bake-off
+### Sprint 9 — Global optimizer bake-off
 
 **Status:** NOT STARTED
 
@@ -403,9 +503,10 @@ result, and V1 isolation.
 depends on deployment, runtime, explainability, and operational cost.
 
 **Scope:** Specify Boolean assignment variables and lexicographic objectives;
-prototype CP-SAT and a bounded TypeScript search against identical fixtures;
-benchmark quality, proof/status, runtime, and deployment complexity; record the
-decision.
+genuinely prototype OR-Tools CP-SAT and a bounded TypeScript/beam search against
+identical fixtures, with exhaustive enumeration as the correctness oracle for
+tiny cases; benchmark solution quality, correctness, proof/status, runtime,
+future constraint flexibility, and deployment complexity; record the decision.
 
 **Out of Scope:** Production UI and Planning Center writes.
 
@@ -420,11 +521,11 @@ supported by reproducible benchmarks.
 **Testing:** Greedy counterexamples, scarce A musicians, uneven availability,
 pair constraints, infeasible windows, timeout results, and deterministic replay.
 
-**Dependencies:** Sprints 1–7 and sufficient calibration evidence.
+**Dependencies:** Sprints 1–8 and sufficient calibration evidence.
 
 **V1 Impact:** None.
 
-### Sprint 9 — Multi-week optimization
+### Sprint 10 — Multi-week optimization
 
 **Status:** NOT STARTED
 
@@ -436,7 +537,8 @@ and opportunity globally.
 **Scope:** Implement the chosen solver; hard coverage and eligibility; maximize
 the weakest week; balance strong-musician distribution; support developing
 musicians; rotation, frequency, consecutive-week, availability, locks, and
-minimal-change objectives; structured explanations.
+minimal-change objectives; structured selection, rejection, alternative, and
+cross-week opportunity-cost explanations.
 
 **Out of Scope:** Polished workspace, AI control, and external writes.
 
@@ -446,16 +548,18 @@ infeasible status, objective breakdowns, and audit metadata.
 
 **Acceptance Criteria:** The system considers the entire range simultaneously,
 beats documented V1 greedy counterexamples, respects hard constraints, and never
-labels an unproven result optimal.
+labels an unproven result optimal. It can deterministically explain why an
+eligible musician was not selected when another placement raised the weakest-week
+score.
 
 **Testing:** All optimizer scenario fixtures, property tests for hard constraints,
 performance budgets, failure recovery, and policy-version replay.
 
-**Dependencies:** Sprint 8.
+**Dependencies:** Sprint 9.
 
 **V1 Impact:** None.
 
-### Sprint 10 — Multi-week scheduling workspace
+### Sprint 11 — Multi-week scheduling workspace
 
 **Status:** NOT STARTED
 
@@ -466,7 +570,7 @@ tradeoffs.
 
 **Scope:** Build Next N Weeks; per-week and whole-window scores; alternatives;
 lock week/person/role; exclude; swap; regenerate unlocked scope; compare changes;
-undo.
+undo; and ask why a person was or was not selected on a date.
 
 **Out of Scope:** Planning Center writes and natural-language control.
 
@@ -479,41 +583,9 @@ can explain why an alternative won; original and previous results are recoverabl
 **Testing:** Conflicting locks, partial reruns, concurrent/stale drafts, timeout,
 infeasibility explanations, undo, and responsive UI.
 
-**Dependencies:** Sprint 9.
+**Dependencies:** Sprint 10.
 
 **V1 Impact:** None.
-
-### Sprint 11 — Planning Center read normalization
-
-**Status:** NOT STARTED
-
-**Goal:** Make Planning Center a reliable, observable input to V2.
-
-**Why:** Optimization is only trustworthy when identities, existing assignments,
-plans, positions, and blockouts are correct and fresh.
-
-**Scope:** Normalize people, teams, positions, plans, service dates, assignments,
-statuses, preferences, and blockouts/reasons; establish durable identity mappings;
-sync status and conflict diagnostics.
-
-**Out of Scope:** Any external write and optimizer policy changes.
-
-**Technical Work:** Typed server-side client and adapters, pagination, caching
-policy, rate/error handling, sync metadata, fixtures from sanitized payloads, and
-contract tests.
-
-**Acceptance Criteria:** V2 can show source and freshness for every imported fact;
-confirmed/unconfirmed/declined statuses and blockouts map correctly; sync failures
-cannot masquerade as availability.
-
-**Testing:** Pagination, missing relationships, duplicate names, changed IDs,
-status variants, rate limits, partial failures, and stale-cache behavior.
-
-**Dependencies:** Sprint 1. It may run earlier in parallel only after roadmap
-approval and with no V1 behavior change.
-
-**V1 Impact:** The hardened transport may later be shared through a separate,
-reviewed V1 change.
 
 ### Sprint 12 — Availability-message import
 
@@ -531,7 +603,9 @@ save locally.
 **Out of Scope:** Rich frequency/role constraints and Planning Center writes.
 
 **Technical Work:** Strict schema output, date-context handling, prompt/version
-audit, privacy/retention controls, deterministic validation, and review UI.
+audit, privacy/retention controls, deterministic validation, and review UI. Retain
+confirmed structured facts and only the minimum useful source excerpt by default;
+do not indefinitely preserve unrelated conversation.
 
 **Acceptance Criteria:** Nothing is saved without confirmation; ambiguous dates
 remain flagged; parser output never directly invokes scheduling or external writes.
@@ -539,7 +613,7 @@ remain flagged; parser output never directly invokes scheduling or external writ
 **Testing:** Relative dates, ranges, negation, corrections, year boundaries,
 ambiguous wording, malformed output, and unavailable OpenAI service.
 
-**Dependencies:** Sprints 1 and 11; retention decision from Sprint 0.
+**Dependencies:** Sprints 1–2.
 
 **V1 Impact:** None unless separately requested as a V1 feature.
 
@@ -594,7 +668,7 @@ the write path.
 **Testing:** Duplicate submission, timeout after remote success, changed remote
 data, revoked authorization, partial failure, and audit replay.
 
-**Dependencies:** Sprints 11–13.
+**Dependencies:** Sprints 2, 12, and 13.
 
 **V1 Impact:** Shared proxy changes require independent V1 regression and security
 review; V1 UI remains unchanged.
@@ -624,7 +698,7 @@ the local draft.
 **Testing:** No-op publish, additions, supported changes/removals, stale remote
 state, partial success, retry, permissions, and notification safeguards.
 
-**Dependencies:** Sprints 10–11 and the write-safety pattern from Sprint 14.
+**Dependencies:** Sprints 2 and 11 and the write-safety pattern from Sprint 14.
 
 **V1 Impact:** Shared proxy changes only; no automatic migration of V1 drafts.
 
@@ -653,7 +727,7 @@ reasons; no remote mutation occurs before confirmation.
 **Testing:** No replacement, required pairs, role-specific tiers, simultaneous
 cancellations, stale Planning Center state, and partial write recovery.
 
-**Dependencies:** Sprints 9, 11, 14, and 15.
+**Dependencies:** Sprints 10–11 and 14–15.
 
 **V1 Impact:** None.
 
@@ -685,7 +759,7 @@ locks, constraints, authorization, or publishing confirmation.
 **Testing:** Ambiguity, prompt injection in imported content, unauthorized actions,
 stale drafts, multi-step requests, cancellation, and provider outage.
 
-**Dependencies:** Stable completion and real use of Sprints 10, 15, and 16.
+**Dependencies:** Stable completion and real use of Sprints 11, 15, and 16.
 
 **V1 Impact:** None.
 
@@ -704,4 +778,3 @@ stale drafts, multi-step requests, cancellation, and provider outage.
   logs, AI prompts beyond the approved need, or client payloads unnecessarily.
 - Do not let AI initiate external writes. Planning Center changes always require
   a deterministic preview and explicit human confirmation.
-
