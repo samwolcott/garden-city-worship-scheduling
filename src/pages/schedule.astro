@@ -110,17 +110,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 					const savedTeamSettings = await supabase.from('team_settings').select('planning_center_team_id,visible');
 					if (savedTeamSettings.error) { message.classList.add('error-notice'); message.textContent = savedTeamSettings.error.message; throw savedTeamSettings.error; }
 					const hiddenTeamIds = new Set((savedTeamSettings.data ?? []).filter((item) => !item.visible).map((item) => item.planning_center_team_id));
-					const callPco = async (path: string, method = 'GET', body?: Record<string, unknown>) => {
-						const { data, error } = await supabase.functions.invoke('planning-center', { body: { method, path, body } });
-						if (!error) return data;
-						const response = 'context' in error && error.context instanceof Response ? error.context : undefined;
-						let detail = error.message;
-						if (response) {
-							try { const payload = await response.clone().json(); detail = payload.error ?? payload.message ?? payload.errors?.[0]?.detail ?? detail; }
-							catch { const text = await response.clone().text(); if (text) detail = text; }
-							throw new Error(`Planning Center request failed (${response.status}): ${detail}`);
-						}
-						throw new Error(`Could not reach the scheduling service: ${detail}`);
+					const pcoReadCache = new Map<string, Promise<any>>(); let pcoQueue: Promise<unknown> = Promise.resolve(); let lastPcoRequestAt = 0;
+					const callPco = (path: string, method = 'GET', body?: Record<string, unknown>) => {
+						const normalizedMethod = method.toUpperCase(); const cacheKey = `${normalizedMethod}:${path}`; if (normalizedMethod === 'GET' && pcoReadCache.has(cacheKey)) return pcoReadCache.get(cacheKey)!;
+						if (normalizedMethod !== 'GET') pcoReadCache.clear();
+						const request = async () => {
+							for (let attempt = 0; attempt < 3; attempt++) {
+								const spacing = Math.max(0, 225 - (Date.now() - lastPcoRequestAt)); if (spacing) await new Promise((resolve) => setTimeout(resolve, spacing)); lastPcoRequestAt = Date.now();
+								const { data, error } = await supabase.functions.invoke('planning-center', { body: { method: normalizedMethod, path, body } });
+								if (!error) return data;
+								const response = 'context' in error && error.context instanceof Response ? error.context : undefined; let detail = error.message;
+								if (response) { try { const payload = await response.clone().json(); detail = payload.error ?? payload.message ?? payload.errors?.[0]?.detail ?? detail; } catch { const text = await response.clone().text(); if (text) detail = text; } if (response.status === 429 && attempt < 2) { message.textContent = 'Planning Center is busy. Waiting briefly, then continuing automatically…'; await new Promise((resolve) => setTimeout(resolve, 20500)); continue; } throw new Error(`Planning Center request failed (${response.status}): ${detail}`); }
+								throw new Error(`Could not reach the scheduling service: ${detail}`);
+							}
+						};
+						const queued = pcoQueue.then(request, request); pcoQueue = queued.then(() => undefined, () => undefined); if (normalizedMethod === 'GET') { pcoReadCache.set(cacheKey, queued); queued.catch(() => pcoReadCache.delete(cacheKey)); } return queued;
 					};
 					const fetchAll = async <T,>(path: string): Promise<T[]> => {
 						const records: T[] = [];
