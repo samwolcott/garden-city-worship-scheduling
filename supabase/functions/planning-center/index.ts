@@ -8,6 +8,7 @@ const allowedReads = [
 const publishPath = /^\/services\/v2\/service_types\/[^/?]+\/plans\/[^/?]+\/team_members$/;
 const createPositionAssignmentPath = /^\/services\/v2\/service_types\/[^/?]+\/team_positions\/[^/?]+\/person_team_position_assignments$/;
 const deletePositionAssignmentPath = /^\/services\/v2\/people\/[^/?]+\/person_team_position_assignments\/[^/?]+$/;
+const deletePlanPersonPath = /^\/services\/v2\/people\/[^/?]+\/plan_people\/[^/?]+$/;
 
 function allowedOrigins() {
   const configured = (Deno.env.get('APP_ORIGINS') ?? Deno.env.get('APP_ORIGIN') ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
@@ -43,7 +44,8 @@ Deno.serve(async (request) => {
   const isPublish = method === 'POST' && publishPath.test(path);
   const isPositionCreate = method === 'POST' && createPositionAssignmentPath.test(path);
   const isPositionDelete = method === 'DELETE' && deletePositionAssignmentPath.test(path);
-  if (!isRead && !isPublish && !isPositionCreate && !isPositionDelete) return Response.json({ error: 'Planning Center operation is not allowed' }, { status: 400, headers });
+  const isPlanPersonDelete = method === 'DELETE' && deletePlanPersonPath.test(path);
+  if (!isRead && !isPublish && !isPositionCreate && !isPositionDelete && !isPlanPersonDelete) return Response.json({ error: 'Planning Center operation is not allowed' }, { status: 400, headers });
   if (isPublish) {
     const data = input.body?.data as { type?: string; attributes?: Record<string, unknown> } | undefined;
     if (!data || data.type !== 'PlanPerson' || !data.attributes) return Response.json({ error: 'Invalid assignment' }, { status: 400, headers });
