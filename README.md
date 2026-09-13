@@ -25,4 +25,4 @@ Deploy the function with `supabase functions deploy planning-center`. Add the Gi
 
 ## Safety
 
-The Planning Center Edge Function allowlists read operations and the single PlanPerson creation endpoint. It overwrites `prepare_notification` to `false` server-side and rejects other writes.
+The Planning Center Edge Function allowlists read operations and the single PlanPerson creation endpoint. It overwrites `prepare_notification` to `true` server-side so new assignments remain private, penciled-in scheduling requests until a team leader explicitly sends them from Planning Center. Other writes are rejected.

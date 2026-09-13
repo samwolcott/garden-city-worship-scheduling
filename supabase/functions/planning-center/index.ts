@@ -47,7 +47,11 @@ Deno.serve(async (request) => {
   if (isPublish) {
     const data = input.body?.data as { type?: string; attributes?: Record<string, unknown> } | undefined;
     if (!data || data.type !== 'PlanPerson' || !data.attributes) return Response.json({ error: 'Invalid assignment' }, { status: 400, headers });
-    data.attributes.prepare_notification = false;
+    // In Planning Center, "prepared" means the scheduling request is penciled in
+    // and waiting for a team leader to send it. Forcing this on keeps a newly
+    // created placeholder private and prevents this API call from publishing it
+    // directly to the musician's schedule.
+    data.attributes.prepare_notification = true;
     delete data.attributes.notification_prepared_at;
   }
   if (isPositionCreate) {
