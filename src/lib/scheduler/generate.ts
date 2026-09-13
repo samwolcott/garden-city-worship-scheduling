@@ -18,6 +18,7 @@ export interface SuggestedAssignment extends Slot { personId: string; personName
 export interface UnfilledSlot extends Slot { reasons: string[]; }
 export interface WeekSuggestion { date: string; assignments: SuggestedAssignment[]; unfilled: UnfilledSlot[]; }
 export interface ExistingAssignment { personId: string; tier: SkillLevel | null; positionId?: string; countsTowardHistory?: boolean; }
+export type SchedulerDebugEvent = { step: 'week-start' | 'assignment' | 'unfilled' | 'week-complete'; date: string; details: Record<string, unknown> };
 
 export const preferenceGap = (preference = '') => {
 	const value = preference.toLowerCase();
@@ -37,7 +38,7 @@ const isWorshipLeader = (positionName: string) => positionName.toLowerCase().inc
 const positionPreference = (person: Candidate, positionId: string) => person.preferencesByPosition?.[positionId] ?? '';
 const previousAssignment = (assignedDates: string[], date: string) => assignedDates.filter((assignedDate) => assignedDate < date).sort().at(-1);
 
-export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, candidates: Candidate[], pairRules: RequiredPairRule[], existingByDate = new Map<string, ExistingAssignment[]>(), initialHistory = new Map<string, string[]>()): WeekSuggestion[] {
+export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, candidates: Candidate[], pairRules: RequiredPairRule[], existingByDate = new Map<string, ExistingAssignment[]>(), initialHistory = new Map<string, string[]>(), onDebug?: (event: SchedulerDebugEvent) => void): WeekSuggestion[] {
 	const eligible = new Map(candidates.filter((person) => isEligibleForScheduling(person)).map((person) => [person.id, person]));
 	const history = new Map([...initialHistory].map(([personId, assignedDates]) => [personId, [...assignedDates].sort()]));
 	const positionUseCounts = new Map<string, number>();
@@ -49,6 +50,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 		const existing = existingByDate.get(date) ?? [];
 		const scheduled = new Set(existing.map((assignment) => assignment.personId));
 		const tierCounts = new Map<SkillLevel, number>([['A', 0], ['B', 0], ['C', 0]]);
+		onDebug?.({ step: 'week-start', date, details: { requestedSlots: open.map((slot) => slot.positionName), existingPersonIds: [...scheduled] } });
 		const countedExisting = new Set<string>();
 		for (const assignment of existing) {
 			if (assignment.countsTowardHistory === false) continue;
@@ -104,8 +106,10 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 					}
 					return { ...slot, reasons: [...categories].map(([reason, names]) => `${reason}: ${names.join(', ')}`) };
 				});
+				onDebug?.({ step: 'unfilled', date, details: { positions: unfilled.map((slot) => slot.positionName), reasons: unfilled.map((slot) => ({ position: slot.positionName, reasons: slot.reasons })) } });
 				break;
 			}
+			onDebug?.({ step: 'assignment', date, details: { score: best.score, placements: best.placements.map(({ person, slotIndex }) => ({ person: person.name, personId: person.id, position: open[slotIndex].positionName, tier: person.skill_level })) } });
 			for (const { person, slotIndex } of best.placements) {
 				const slot = open[slotIndex];
 				const positionKey = `${person.id}:${slot.positionId}`;
@@ -134,7 +138,7 @@ export function suggestWeeks(dates: string[], slotsByDate: Map<string, Slot[]>, 
 			}
 			best.placements.map((placement) => placement.slotIndex).sort((a, b) => b - a).forEach((index) => open.splice(index, 1));
 		}
-		results.push({ date, assignments, unfilled });
+		results.push({ date, assignments, unfilled }); onDebug?.({ step: 'week-complete', date, details: { assignments: assignments.map((assignment) => `${assignment.positionName}: ${assignment.personName}`), unfilled: unfilled.map((slot) => slot.positionName) } });
 	}
 	return results;
 }
